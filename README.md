@@ -25,3 +25,10 @@ Received signal parameters:
 Used in the project Qt C++ widget QCustomPlot
 (necessary files are included in the project):
 https://www.qcustomplot.com/
+
+
+If you find this project useful, consider donating:
+
+[Donate via PayPal](https://www.paypal.com/donate?hosted_button_id=A4EMYB46V67WJ)
+
+**Bitcoin**: `bc1qem3sk3gumc3u8h6dx0nmffy4272vj8sx9s750p`
