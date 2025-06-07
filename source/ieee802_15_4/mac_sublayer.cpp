@@ -56,8 +56,8 @@ void mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_)
     int len_data = 0;
     if(len >= 10 && len <= MAX_PHY_PAYLOAD){
 //        qDebug() << "mac_sublayer::parser_data                       " << len;
-        uint16_t data[len];
-        uint16_t byte;
+        uint8_t data[len];
+        uint8_t byte;
         uint8_t symbol;//4 bits
         uint16_t crc = 0x0;
         for(int i = 0; i < len - 4; ++i){
@@ -120,7 +120,8 @@ void mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_)
 
         if(crc == fcs){
             uint16_t frame_control = data[0];
-            frame_control += data[1] << 0x8;
+            uint16_t b = data[1];
+            frame_control += b << 0x8;
 
             frame_control_field fcf = parser_frame_control(frame_control);
             fcf.sequence_number = data[2];
@@ -174,14 +175,15 @@ frame_control_field mac_sublayer::parser_frame_control(uint16_t &frame_control_)
 
 }
 //--------------------------------------------------------------------------------------------------
-addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_, uint16_t *data_)
+addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_, uint8_t *data_)
 {
     addressing_fields af;
     uint8_t offset = 3; //frame_control_field 2(byte) + sequence_number 1(byte)
-    uint16_t *p_d = data_ + offset;
+    uint8_t *data = data_;
+    uint8_t *p_d = data + offset;
     af.dest_pan_id = p_d[0] + (p_d[1] << 0x8);
     offset += 2;
-    p_d = data_ + offset;
+    p_d = data + offset;
     bool  da = true;
     switch(fcf_.dest_mode){
     case Adressing_mode_not_present:
@@ -195,16 +197,16 @@ addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_, uint
     case Adressing_mode_16bit_short:
         af.dest_address = p_d[0] + (p_d[1] << 0x8);
         offset += 2;
-        p_d = data_ + offset;
+        p_d = data + offset;
         break;
     case Adressing_mode_64bit_extended:
         af.dest_address = p_d[0] + (p_d[1] << 0x8);
         offset += 2;
-        p_d = data_ + offset;
+        p_d = data + offset;
         uint64_t address = p_d[0] + (p_d[1] << 0x8);
         af.dest_address += (address << 0x10) + af.dest_address;
         offset += 2;
-        p_d = data_ + offset;
+        p_d = data + offset;
         break;
     }
 
@@ -212,7 +214,7 @@ addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_, uint
     if(fcf_.intra_pan == 0 && sa){
         af.source_pan_id = p_d[0] + (p_d[1] << 0x8);
         offset += 2;
-        p_d = data_ + offset;
+        p_d = data + offset;
     }
     else{
         af.source_pan_id = 0x0;
@@ -232,7 +234,7 @@ addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_, uint
     case Adressing_mode_64bit_extended:
         af.source_address = p_d[0] + (p_d[1] << 0x8);
         offset += 2;
-        p_d = data_ + offset;
+        p_d = data + offset;
         uint64_t address = p_d[0] + (p_d[1] << 0x8);
         af.source_address += (address << 0x10) + af.source_address;
         offset += 2;

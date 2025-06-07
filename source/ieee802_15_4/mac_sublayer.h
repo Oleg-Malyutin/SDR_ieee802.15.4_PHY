@@ -75,7 +75,7 @@ struct addressing_fields{
 struct mpdu{
     frame_control_field fcf;
     addressing_fields af;
-    uint16_t *data;
+    uint8_t *data;
     uint8_t len_data;
 };
 
@@ -99,7 +99,7 @@ private:
     void work(mac_sublayer_data_t *data_);
     void parser_data(std::vector<uint8_t> *mpdu_);
     frame_control_field parser_frame_control(uint16_t &frame_control_);
-    addressing_fields parse_addressing(frame_control_field &fcf_, uint16_t *data_);
+    addressing_fields parse_addressing(frame_control_field &fcf_, uint8_t *data_);
 
     constexpr static uint16_t CRC_CCITT_TABLE[256] =
     {
