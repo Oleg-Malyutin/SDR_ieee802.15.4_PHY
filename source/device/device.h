@@ -16,12 +16,21 @@
 */
 #include <QObject>
 #include <QTimer>
+#include <QUdpSocket>
 
 #include <stdint.h>
 
 //#include "device/device_thread.h"
 #include "adalm_pluto/pluto_sdr.h"
 #include "ieee802_15_4/ieee802_15_4.h"
+
+#define ZEP_BUFFER_SIZE 256
+#define ZEP_PREAMBLE "EX"
+#define ZEP_V2_TYPE_DATA 1
+#define ZEP_V2_TYPE_ACK 2
+#define ZEP_PORT 17754
+
+const unsigned long long EPOCH = 2208988800ULL;
 
 class device : public QObject, public ieee802_15_4_callback, public mpdu_sublayer_callback
 {
@@ -34,7 +43,7 @@ public slots:
     void start(QString name_);
     void stop();
     void advanced_settings_dialog();
-    void set_rx_frequency(long long int rx_frequency_);
+    void set_rx_frequency(int channel_);
     void set_rx_hardwaregain(double rx_hardwaregain_);
 
 signals:
@@ -50,6 +59,7 @@ signals:
     void plot_fft_correlation(int len_plot_, std::complex<float>* plot_buffer_);
 
 private:
+    int channel;
     rx_thread_data_t *rx_thread_data;
     enum {
         PLUTO,
@@ -74,6 +84,28 @@ private:
 
     ieee802_15_4 *dev_ieee802_15_4;
     std::thread *ieee802_15_4_thread;
+
+    QUdpSocket *rx_socket;
+    QUdpSocket *tx_socket;
+    unsigned short rx_port;
+    unsigned short tx_port;
+    struct __attribute__((__packed__)) zep_header_data {
+      char preamble[2];
+      unsigned char version;
+      unsigned char type;
+      unsigned char channel_id;
+      uint16_t device_id;
+      unsigned char lqi_mode;
+      unsigned char lqi;
+      uint32_t timestamp_s;
+      uint32_t timestamp_ns;
+      uint32_t sequence = 0;
+      unsigned char reserved[10];
+      unsigned char length;
+    };
+
+    unsigned char zep_buffer[ZEP_BUFFER_SIZE];
+
 
 
 };

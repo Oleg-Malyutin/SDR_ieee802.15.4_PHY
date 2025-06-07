@@ -14,6 +14,8 @@
 */
 #include "device.h"
 
+#include <sys/time.h>
+
 //-----------------------------------------------------------------------------------------
 device::device(QObject *parent) : QObject(parent)
 {
@@ -25,6 +27,9 @@ device::device(QObject *parent) : QObject(parent)
     connect(timer, &QTimer::timeout, this, &device::search_devices);
     timer->start(1000);
     rx_thread_data = new rx_thread_data_t;
+
+    rx_socket = new QUdpSocket(this);
+    tx_socket = new QUdpSocket(this);
 }
 //-----------------------------------------------------------------------------------------
 device::~device()
@@ -39,6 +44,8 @@ device::~device()
     delete dev_ieee802_15_4;
     delete pluto;
     delete rx_thread_data;
+    delete rx_socket;
+    delete tx_socket;
     qDebug() << "device::~device() stop";
 }
 //-----------------------------------------------------------------------------------------
@@ -80,6 +87,9 @@ void device::start(QString name_)
         ieee802_15_4_thread = new std::thread(&ieee802_15_4::start, dev_ieee802_15_4, rx_thread_data);
         ieee802_15_4_thread->detach();
     }
+
+//    rx_port = _rx_port;
+    tx_port = 17754;
 }
 //-----------------------------------------------------------------------------------------
 void device::stop()
@@ -91,6 +101,13 @@ void device::stop()
             QThread::msleep(1);
         }
         delete ieee802_15_4_thread;
+    }
+    if(rx_socket->isValid()){
+//        disconnect(rx_socket, &QUdpSocket::readyRead, this, &udp_remote_base::rx_read_udp);
+        rx_socket->close();
+    }
+    if(tx_socket->isValid()){
+        tx_socket->close();
     }
 }
 //-----------------------------------------------------------------------------------------
@@ -216,6 +233,29 @@ void device::mpdu_callback(mpdu mpdu_)
 
 
     emit get_frame_capture(list);
+
+    struct timeval tv;
+
+    zep_header_data *z_header = (struct zep_header_data *) zep_buffer;
+
+    strncpy(z_header->preamble, ZEP_PREAMBLE, 2);
+    z_header->version = 2;
+    z_header->type = ZEP_V2_TYPE_DATA;
+    z_header->channel_id = channel;
+    z_header->device_id = 0xff;//htobe32(packet->device);
+    z_header->lqi_mode = 1;// mode = 0 lqi, mode = 1 fcs
+    z_header->lqi = 0;//packet->lqi;
+    gettimeofday(&tv, NULL);
+    z_header->timestamp_s = htobe32(tv.tv_sec + EPOCH);
+    z_header->timestamp_ns = htobe32(tv.tv_usec * 1000);
+    z_header->sequence++;
+    z_header->length = mpdu_.len_data;
+    unsigned char *d = (unsigned char *)mpdu_.data;
+    memcpy(&zep_buffer[sizeof(struct zep_header_data)], d, mpdu_.len_data);
+    int64_t length = sizeof(struct zep_header_data) + mpdu_.len_data;
+
+    tx_socket->writeDatagram((char*)zep_buffer, length, QHostAddress::Any, ZEP_PORT);
+
 }
 //-----------------------------------------------------------------------------------------
 void device::advanced_settings_dialog()
@@ -229,11 +269,16 @@ void device::advanced_settings_dialog()
     }
 }
 //-----------------------------------------------------------------------------------------
-void device::set_rx_frequency(long long int rx_frequency_)
+void device::set_rx_frequency(int channel_)
 {
+    channel = channel_;
+
     switch (type_dev) {
     case PLUTO:
-        pluto->set_rx_frequency(rx_frequency_);
+    {
+        uint64_t rx_frequency = ieee802_15_4_info::fq_channel_mhz[channel] * 1e6;
+        pluto->set_rx_frequency(rx_frequency);
+    }
         break;
     case NONE:
         break;
