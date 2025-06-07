@@ -114,9 +114,7 @@ void main_window::remove_device(QString name_)
 //-----------------------------------------------------------------------------------------
 void main_window::on_comboBox_channel_currentIndexChanged(int index)
 {
-    ieee802_15_4_info info;
-    uint64_t rf_fq = info.fq_channel_mhz[index] * 1e6;
-    dev->set_rx_frequency(rf_fq);
+    dev->set_rx_frequency(index);
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_verticalSlider_valueChanged(int value)
