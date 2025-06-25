@@ -6,6 +6,8 @@
 #include "device/device.h"
 #include "plot/plot.h"
 
+Q_DECLARE_METATYPE(mpdu);
+
 QT_BEGIN_NAMESPACE
 namespace Ui { class main_window; }
 QT_END_NAMESPACE
@@ -21,10 +23,11 @@ public:
 private slots:
     void device_found(QString name_);
     void remove_device(QString name_);
+    void device_status();
 
     void on_comboBox_channel_currentIndexChanged(int index);
     void on_verticalSlider_valueChanged(int value);
-    void get_frame_capture(QStringList list_);
+    void mac_protocol_data_units(mpdu mpdu_);
 
     void on_pushButton_start_clicked();
 
@@ -37,6 +40,7 @@ signals:
     void set_rx_hardwaregain(double rx_hardwaregain_);
 
 private:
+
     Ui::main_window *ui;
 
     device *dev;
@@ -48,6 +52,8 @@ private:
     plot *plot_constelation = nullptr;
     plot *plot_sfd_correlation = nullptr;
     plot *plot_sfd_synchronize = nullptr;
+
+    plot *plot_test = nullptr;
 
 };
 #endif // MAIN_WINDOW_H

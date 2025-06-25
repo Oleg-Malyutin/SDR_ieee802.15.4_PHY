@@ -22,14 +22,17 @@ main_window::main_window(QWidget *parent)
 {
     ui->setupUi(this);
 
+    qRegisterMetaType<mpdu>();
+
     dev = new device;
     connect(dev, &device::device_found, this, &main_window::device_found);
     connect(dev, &device::remove_device, this, &main_window::remove_device);
+    connect(dev, &device::device_status, this, &main_window::device_status);
     connect(this, &main_window::start, dev, &device::start);
     connect(this, &main_window::stop, dev, &device::stop);
     connect(ui->actionAdvanced_device_settings, &QAction::triggered,
             dev, &device::advanced_settings_dialog);
-    connect(dev, &device::get_frame_capture, this, &main_window::get_frame_capture);
+    connect(dev, &device::mac_protocol_data_units, this, &main_window::mac_protocol_data_units);
 
     plot_constelation = new plot(ui->plot_constelation,
                                  type_graph::type_constelation, "Packet detection");
@@ -51,11 +54,16 @@ main_window::main_window(QWidget *parent)
     connect(dev, &device::plot_preamble_correlaion,
             plot_preamble_correlation, &plot::replace_oscilloscope, Qt::QueuedConnection);
 
+    plot_test = new plot(ui->plot_trnsmitter,
+                         type_graph::type_oscilloscope_2, "Test");
+    connect(dev, &device::plot_test,
+            plot_test, &plot::replace_oscilloscope, Qt::QueuedConnection);
+
     for(int i = 0; i < ieee802_15_4_info::number_of_channels; ++i){
         ui->comboBox_channel->addItem(QString::number(i));
     }
     ui->comboBox_channel->setCurrentIndex(ieee802_15_4_info::channel);
-    ui->verticalSlider->setValue(26);
+    ui->verticalSlider->setValue(69);
 }
 //-----------------------------------------------------------------------------------------
 main_window::~main_window()
@@ -89,7 +97,6 @@ void main_window::device_found(QString name_)
 void main_window::select_device(QString name_)
 {
     name_select_device = name_;
-    ui->actionAdvanced_device_settings->setEnabled(true);
     for(auto &action : ui->menuOpen_device->actions()){
         if(action->text() ==  name_select_device){
             action->setEnabled(false);
@@ -106,10 +113,16 @@ void main_window::remove_device(QString name_)
         if(action->text() == name_){
             ui->menuOpen_device->removeAction(action);
             if(name_select_device == name_){
+                name_select_device = "";
                 ui->actionAdvanced_device_settings->setEnabled(false);
             }
         }
     }
+}
+//-----------------------------------------------------------------------------------------
+void main_window::device_status()
+{
+    dev->stop();
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_comboBox_channel_currentIndexChanged(int index)
@@ -123,22 +136,136 @@ void main_window::on_verticalSlider_valueChanged(int value)
     dev->set_rx_hardwaregain(gain_db);
 }
 //-----------------------------------------------------------------------------------------
-void main_window::get_frame_capture(QStringList list_)
+void main_window::mac_protocol_data_units(mpdu mpdu_)
 {
-   for(const auto &it : list_){
+    QString text_capture = "Frame version: ";
+    QStringList list;
+    list.append("");
+    switch (mpdu_.fcf.frame_version) {
+    case 0:
+        text_capture += "IEEE Std 802.15.4-2003.";
+        break;
+    case 1:
+        text_capture += "IEEE Std 802.15.4-2006.";
+        break;
+    case 2:
+        text_capture += "IEEE Std 802.15.4.";
+        break;
+    case 3:
+        text_capture += "Reserved.";
+        break;
+    }
+    QString frame_type;
+    switch (mpdu_.fcf.type){
+    case Frame_type_beacon:
+        frame_type = "Frame type: beacon.";
+        break;
+    case Frame_type_data:
+        frame_type = "Frame type: data";
+        break;
+    case Frame_type_acknowledgment:
+        frame_type = "Frame type: acknowledgment.";
+        break;
+    case Frame_type_MAC_command:
+        frame_type = "Frame type: MAC_command.";
+        break;
+    case Frame_type_reserved:
+        frame_type = "Frame type: reserved.";
+        break;
+    }
+    text_capture += " " + frame_type;
+    list.append(text_capture);
+
+    QString address;
+    if(mpdu_.af.dest_address == 0){
+        address = "not present";
+    }
+    else{
+        address = "0x" + QString::number(mpdu_.af.dest_address, 16);
+    }
+    text_capture = "Destination PAN 0x" + QString::number(mpdu_.af.dest_pan_id, 16) +
+                   ",  Destination address " + address + ". ";
+
+    if(mpdu_.af.source_pan_id == 0){
+        address = "not present";
+    }
+    else{
+        address = "0x" + QString::number(mpdu_.af.source_pan_id, 16);
+    }
+    text_capture += "Source PAN " + address;
+    if(mpdu_.af.source_address == 0){
+        address = "not present";
+    }
+    else{
+        address = "0x" + QString::number(mpdu_.af.source_address, 16);
+    }
+    text_capture += ",  Source address " + address;
+    list.append(text_capture);
+    QVector<QString> data;
+    data.push_back(QString());
+
+    int idx_char = 0;
+    int slice = 0;
+    QString text("  ");
+    while(idx_char < mpdu_.len_data){
+        uint16_t d = mpdu_.data[idx_char];
+        if(++slice > 32){
+            slice = 0;
+            data.last() += text;
+            text.clear();
+            data.push_back(QString());
+        }
+        if(idx_char % 8 == 0){
+            data.last().append("  ");
+        }
+        if(mpdu_.data[idx_char] < 0x10){
+            data.last().append("0");
+        }
+        data.last().append(QString::number(d, 16) + " ");
+        if(d > 0x1f && d < 0x7f){
+            text.append(d);
+        }
+        else{
+            text.append(".");
+        }
+
+        ++idx_char;
+    }
+    if(slice > 0 && slice < 32){
+        data.last().append("  ");
+        int add_space = (31 - slice) / 8;
+        while(add_space){
+            data.last().append("  ");
+            --add_space;
+        }
+        while(++slice < 32){
+            data.last().append("   ");
+        }
+        data.last() += text;
+    }
+    for(auto &it : data){
+        list.append(it);
+    }
+
+   for(const auto &it : list){
        ui->textBrowser_capture->append(it);
    }
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_pushButton_start_clicked()
 {
+    ui->actionAdvanced_device_settings->setEnabled(true);
+
     emit start(name_select_device);
+
     on_comboBox_channel_currentIndexChanged(ui->comboBox_channel->currentIndex());
     on_verticalSlider_valueChanged(ui->verticalSlider->value());
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_pushButton_stop_clicked()
 {
+    ui->actionAdvanced_device_settings->setEnabled(false);
+
     emit stop();
 }
 //-----------------------------------------------------------------------------------------
