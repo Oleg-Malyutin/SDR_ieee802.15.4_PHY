@@ -10,7 +10,8 @@ Processor: Intel© Core™ i5-8600 CPU @ 3.10GHz × 6
 
 Supported devices:
 1. PlutoSDR
-2. ...
+2. LimeSDR mini 1.0
+3. ...
 
 Received signal parameters:
 1. O-QPSK (IEEE 802.15.4 - 2003)
