@@ -15,6 +15,8 @@
 #include "pluto_sdr.h"
 #include "ui_pluto_sdr.h"
 
+#include <QDebug>
+
 //--------------------------------------------------------------------------------------------------
 pluto_sdr::pluto_sdr(QWidget *parent) :
     QDialog(parent),
@@ -22,8 +24,8 @@ pluto_sdr::pluto_sdr(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    dev_rx = new device_rx;
-    dev_tx = new device_tx;
+    dev_rx = new pluto_sdr_rx;
+    dev_tx = new pluto_sdr_tx;
 
     config = new QSettings(faile_name , QSettings::NativeFormat);
     ui->comboBox_rx_rf_port->addItem("A_BALANCED");
@@ -50,17 +52,9 @@ pluto_sdr::pluto_sdr(QWidget *parent) :
 pluto_sdr::~pluto_sdr()
 {
     qDebug() << "pluto_sdr::~pluto_sdr() start";
-    // TODO
-    if(thread_tx != nullptr){
-        thread_tx->quit();
-        thread_tx = nullptr;
-    }
-    else{
-       delete dev_tx;
-    }
-    //__
     stop();
     delete dev_rx;
+    delete dev_tx;
     delete config;
     delete ui;
     qDebug() << "pluto_sdr::~pluto_sdr() stop";
@@ -140,20 +134,19 @@ bool pluto_sdr::check_connect()
     return true;
 }
 //--------------------------------------------------------------------------------------------------
-void pluto_sdr::start(rx_thread_data_t *rx_thread_data_)
+void pluto_sdr::start(rx_thread_data_t *rx_thread_data_, tx_thread_data_t *tx_thread_data_)
 {
     rx_thread_data = rx_thread_data_;
     rx_thread_data->reset();
     rx_thread_data->len_buffer = RX_PLUTO_LEN_BUFFER;
-    thread_rx = new std::thread(&device_rx::start, dev_rx, cf_ad9361_lpc, rx_thread_data);
+    thread_rx = new std::thread(&pluto_sdr_rx::start, dev_rx, cf_ad9361_lpc, rx_thread_data);
     thread_rx->detach();
 
-    thread_tx = new QThread;
-    dev_tx->moveToThread(thread_tx);
-    connect(thread_tx, &QThread::started, dev_tx, &device_tx::start);
-    connect(thread_tx, &QThread::finished, dev_tx, &device_tx::deleteLater);
-    connect(thread_tx, &QThread::finished, thread_tx, &QThread::deleteLater);
-    thread_tx->start();
+    tx_thread_data = tx_thread_data_;
+    tx_thread_data->reset();
+    tx_thread_data->len_buffer = TX_PLUTO_LEN_BUFFER;
+    thread_tx = new std::thread(&pluto_sdr_tx::start, dev_tx, cf_ad9361_dds_core_lpc, tx_thread_data);
+    thread_tx->detach();
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::stop()
@@ -161,9 +154,17 @@ void pluto_sdr::stop()
     if(dev_rx->is_started){
         rx_thread_data->stop = true;
         while(dev_rx->is_started){
-            QThread::msleep(1);
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         };
         delete thread_rx;
+    }
+    if(dev_tx->is_started){
+        tx_thread_data->stop = true;
+        tx_thread_data->cond_value.notify_one();
+        while(dev_tx->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        };
+        delete thread_tx;
     }
 }
 //-----------------------------------------------------------------------------------------

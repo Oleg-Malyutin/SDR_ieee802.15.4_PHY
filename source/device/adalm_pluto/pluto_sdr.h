@@ -17,11 +17,12 @@
 
 #include <QDialog>
 #include <QSettings>
+#include <QMessageBox>
 
 #include <iio.h>
 
-#include "device_rx.h"
-#include "device_tx.h"
+#include "pluto_sdr_rx.h"
+#include "pluto_sdr_tx.h"
 
 #define err(ans) { pluto_sdr_assert((ans), __FILE__, __LINE__); }
 inline void pluto_sdr_assert(int error, const char *file, int line, bool abort=true)
@@ -51,8 +52,8 @@ public:
         IP,
         USB
     };
-    device_rx* dev_rx = nullptr;
-    device_tx* dev_tx = nullptr;
+    pluto_sdr_rx* dev_rx = nullptr;
+    pluto_sdr_tx* dev_tx = nullptr;
     bool open_device(enum_uri idx, QString &name_);
     void close_device();
     bool check_connect();
@@ -61,7 +62,7 @@ signals:
 
 public slots:
     void advanced_settings_dialog();
-    void start(rx_thread_data_t *rx_thread_data_);
+    void start(rx_thread_data_t *rx_thread_data_, tx_thread_data_t *tx_thread_data_);
     void stop();
     void set_rx_rf_bandwidth(long long int bandwidht_hz_);
     void set_rx_sampling_frequency(long long int sampling_frequency_hz_);
@@ -117,7 +118,8 @@ private:
 
     rx_thread_data_t *rx_thread_data;    ;
     std::thread *thread_rx = nullptr;
-    QThread* thread_tx = nullptr;
+    tx_thread_data_t *tx_thread_data;    ;
+    std::thread *thread_tx = nullptr;
 
 };
 
