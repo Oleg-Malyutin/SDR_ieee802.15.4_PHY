@@ -61,7 +61,6 @@ void pluto_sdr_tx::work(tx_thread_data_t *tx_thread_data_)
         }
     }
     stop();
-//    callback->error_callback(rx_thread_data->status);
     fprintf(stderr, "device_tx::work() finish\n");
 }
 //-----------------------------------------------------------------------------------------
