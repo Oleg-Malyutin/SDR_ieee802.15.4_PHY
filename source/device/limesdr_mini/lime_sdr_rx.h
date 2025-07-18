@@ -20,8 +20,6 @@ private:
     short *buffer[2] = {nullptr, nullptr};
     void work(rx_thread_data_t *rx_thread_data_);
     void stop();
-
-    int samples_count_iq;
 };
 
 #endif // LIME_SDR_RX_H

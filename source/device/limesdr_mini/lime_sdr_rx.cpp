@@ -36,17 +36,17 @@ void lime_sdr_rx::start(lms_device_t *device_, rx_thread_data_t *rx_thread_data_
         return;
 
     }
-//    //configure LPF
-//    if (LMS_SetLPFBW(device, LMS_CH_RX, 0, 2000000.0) != 0){
-//        fprintf(stderr, "rx_limesdr::open_device: Do not set LPFBW! \n");
+    //configure LPF
+    if (LMS_SetLPFBW(device, LMS_CH_RX, 0, 2000000.0) != 0){
+        fprintf(stderr, "rx_limesdr::open_device: Do not set LPFBW! \n");
 
-//        return;
+        return;
 
-//    }
+    }
     float_type host_hz, rf_hz;
     LMS_GetSampleRate(device, LMS_CH_RX, 0, &host_hz, &rf_hz);
     samplerate = host_hz;
-    // perform automatic calibration 
+    // perform automatic calibration
     if (LMS_Calibrate(device, LMS_CH_RX, 0, 2500000.0, 0) < 0){
         fprintf(stderr, "LMS_Calibrate() : %s\n", LMS_GetLastErrorMessage());
         stop();
@@ -54,6 +54,7 @@ void lime_sdr_rx::start(lms_device_t *device_, rx_thread_data_t *rx_thread_data_
         return;
 
     }
+
     is_started = true;
     work(rx_thread_data_);
 }
@@ -68,7 +69,7 @@ void lime_sdr_rx::work(rx_thread_data_t *rx_thread_data_)
     int16_t *buffer_b = new int16_t [samples_count_iq * 2];
     bool swap = true;
     int16_t *ptr_buffer = buffer_a;
-    uint32_t timeout_ms = samples_count_iq * 1000.0 / samplerate * 0.9;
+    uint32_t timeout_ms = samples_count_iq * 1000.0 / samplerate * 1.2;
     LMS_StartStream(&stream);
 
     while(!rx_thread_data->stop){

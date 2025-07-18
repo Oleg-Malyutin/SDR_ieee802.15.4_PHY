@@ -155,22 +155,24 @@ void lime_sdr::set_rx_sampling_frequency(long long int sampling_frequency_hz_)
     rx_sample_rate_hz = sampling_frequency_hz_;
     //set sample rate, preferred oversampling in RF 0(use device default oversampling value)
     LMS_SetSampleRate(device, rx_sample_rate_hz, 0);
+
 }
 //-----------------------------------------------------------------------------------------
 void lime_sdr::set_rx_hardwaregain(double hardwaregain_db_)
 {
     //set rx gain range [0, 73](dB), where 73 represents the maximum gain
-    float_type gain = hardwaregain_db_ / 73.0;
+    float_type gain = hardwaregain_db_ / 71.0;
     LMS_SetNormalizedGain(device, LMS_CH_RX, 0, gain);
+//    LMS_SetGaindB(device, LMS_CH_RX, 0, (float_type)hardwaregain_db_);
 }
 //-----------------------------------------------------------------------------------------
 void lime_sdr::set_rx_frequency(long long int frequency_hz_)
 {
     float_type fq = frequency_hz_;
     //set center frequency
-    if (LMS_SetLOFrequency(device, LMS_CH_RX, 0, fq) != 0){
+//    if (LMS_SetLOFrequency(device, LMS_CH_RX, 0, fq) != 0){
         LMS_SetLOFrequency(device, LMS_CH_RX, 0, fq);
-    }
+//    }
 }
 //-----------------------------------------------------------------------------------------
 void lime_sdr::get_rx_rssi(double &rssi_db_)
