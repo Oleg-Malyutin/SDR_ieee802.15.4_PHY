@@ -14,39 +14,49 @@
 */
 #include "device.h"
 
+#include <QDateTime>
+
+#if !(defined(WIN32) || defined(WIN64))
 #include <sys/time.h>
+#include <sys/param.h>
+#else
+#include <winsock2.h>
+#define htobe32(x) htonl(x)
+#endif
 
 //-----------------------------------------------------------------------------------------
 device::device(QObject *parent) : QObject(parent)
 {
     pluto = new pluto_sdr;
-    dev_ieee802_15_4 = new ieee802_15_4;
-    dev_ieee802_15_4->connect_callback(this);
-    dev_ieee802_15_4->mac_layer->connect_callback(this);
+    lime = new lime_sdr;
+    rx_dev_ieee802_15_4 = new rx_ieee802_15_4;
+    rx_dev_ieee802_15_4->connect_callback(this);
+    rx_dev_ieee802_15_4->mac_layer->connect_callback(this);
     timer = new QTimer(this);
     connect(timer, &QTimer::timeout, this, &device::search_devices);
     timer->start(1000);
     rx_thread_data = new rx_thread_data_t;
+    tx_dev_ieee802_15_4 = new tx_ieee802_15_4;
+    tx_dev_ieee802_15_4->connect_callback(this);
+    tx_thread_data = new tx_thread_data_t;
+    tx_thread_send_data = new tx_thread_send_data_t;
 
     rx_socket = new QUdpSocket(this);
-    tx_socket = new QUdpSocket(this);
+    tx_socket = new QUdpSocket;
 }
 //-----------------------------------------------------------------------------------------
 device::~device()
 {
-    qDebug() << "device::~device() start";
     disconnect(timer, &QTimer::timeout, this, &device::search_devices);
-    if(timer->isActive()){
-        timer->stop();
-    }
     stop();
     delete timer;
-    delete dev_ieee802_15_4;
+    delete rx_dev_ieee802_15_4;
+    delete tx_dev_ieee802_15_4;
     delete pluto;
     delete rx_thread_data;
+    delete tx_thread_data;
     delete rx_socket;
     delete tx_socket;
-    qDebug() << "device::~device() stop";
 }
 //-----------------------------------------------------------------------------------------
 void device::search_devices()
@@ -58,12 +68,16 @@ void device::search_devices()
             pluto->set_rx_sampling_frequency(ieee802_15_4_info::samplerate);
             pluto->set_rx_frequency(ieee802_15_4_info::rf_frequency);
             pluto->set_rx_hardwaregain(26);
+            pluto->set_tx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
+            pluto->set_tx_sampling_frequency(ieee802_15_4_info::samplerate);
+            pluto->set_tx_frequency(ieee802_15_4_info::rf_frequency);
+            pluto->set_tx_hardwaregain(PLUTO_TX_GAIN_MAX);
 
             emit device_found(pluto_name);
 
         }
     }
-    else if(!pluto_is_start){
+    else if(pluto_is_open || !pluto_is_start){
         if(!pluto->check_connect()){
             pluto->close_device();
             pluto_is_open = false;
@@ -72,189 +86,206 @@ void device::search_devices()
 
         }
     }
+    if(!lime_is_open) {
+        if(lime->open_device(lime_name)){
+            lime_is_open = true;
+            lime->set_rx_sampling_frequency(ieee802_15_4_info::samplerate);
+            lime->set_rx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
+            lime->set_rx_frequency(ieee802_15_4_info::rf_frequency);
+            lime->set_rx_hardwaregain(69);
+            lime->set_tx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
+            lime->set_tx_sampling_frequency(ieee802_15_4_info::samplerate);
+            lime->set_tx_frequency(ieee802_15_4_info::rf_frequency);
+            lime->set_tx_hardwaregain(PLUTO_TX_GAIN_MAX);
+
+            emit device_found(lime_name);
+
+        }
+    }
+    else if(lime_is_open || !lime_is_start){
+        if(!lime->check_connect()){
+            lime->close_device();
+            lime_is_open = false;
+
+            emit remove_device(lime_name);
+
+        }
+    }
 }
 //-----------------------------------------------------------------------------------------
 void device::start(QString name_)
 {
+    stop();
     if(name_ == pluto_name){
         // TODO__
         timer->stop();
         //__
         pluto_is_start = true;
         type_dev = PLUTO;
-        pluto->start(rx_thread_data);
-        // TODO : protocol start;
-        ieee802_15_4_thread = new std::thread(&ieee802_15_4::start, dev_ieee802_15_4, rx_thread_data);
-        ieee802_15_4_thread->detach();
+        pluto->start(rx_thread_data, tx_thread_data);  
     }
+    else if(name_ == lime_name){
+        // TODO__
+        timer->stop();
+        //__
+        lime_is_start = true;
+        type_dev = LIME;
+        lime->start(rx_thread_data, tx_thread_data);
+    }
+    else{
+
+        return;
+
+    }
+    // TODO : protocol start;
+    rx_ieee802_15_4_thread = new std::thread(&rx_ieee802_15_4::start,
+                                             rx_dev_ieee802_15_4, rx_thread_data);
+    rx_ieee802_15_4_thread->detach();
+    tx_ieee802_15_4_thread = new std::thread(&tx_ieee802_15_4::start,
+                                             tx_dev_ieee802_15_4, tx_thread_data,
+                                             tx_thread_send_data);
+    tx_ieee802_15_4_thread->detach();
 
 //    rx_port = _rx_port;
-    tx_port = 17754;
+    tx_port = ZEP_PORT;
 }
 //-----------------------------------------------------------------------------------------
 void device::stop()
 {
-    if(dev_ieee802_15_4->is_started){
+    while (timer->isActive()){
+        timer->stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+
+//        qDebug() << "timer->isActive()" << timer->isActive();
+    }
+    switch (type_dev) {
+    case PLUTO:
+        if(pluto_is_start){
+            pluto_is_start = false;
+            pluto->stop();
+        }
+        if(pluto_is_open){
+            pluto_is_open = false;
+            if(!pluto->check_connect()){
+
+                emit remove_device(pluto_name);
+
+            }
+            pluto->close_device();
+        }
+        break;
+    case LIME:
+        if(lime_is_start){
+            lime_is_start = false;
+            lime->stop();
+        }
+        if(lime_is_open){
+            lime_is_open = false;
+            if(!lime->check_connect()){
+
+                emit remove_device(lime_name);
+
+            }
+            lime->close_device();
+        }
+        break;
+    default:
+        break;
+    }
+    type_dev = NONE;
+    if(rx_dev_ieee802_15_4->is_started){
         rx_thread_data->stop = true;
         rx_thread_data->cond_value.notify_one();
-        while(dev_ieee802_15_4->is_started){
-            QThread::msleep(1);
+        while(rx_dev_ieee802_15_4->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        delete ieee802_15_4_thread;
+        delete rx_ieee802_15_4_thread;
     }
     if(rx_socket->isValid()){
 //        disconnect(rx_socket, &QUdpSocket::readyRead, this, &udp_remote_base::rx_read_udp);
         rx_socket->close();
     }
-    if(tx_socket->isValid()){
-        tx_socket->close();
+    if(tx_dev_ieee802_15_4->is_started){
+        tx_thread_send_data->stop = true;
+        tx_thread_send_data->cond_value.notify_one();
+        while(tx_dev_ieee802_15_4->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        delete tx_ieee802_15_4_thread;
     }
+//    if(tx_socket->isValid()){
+//        tx_socket->close();
+//    }
+
+    timer->start(1000);
 }
 //-----------------------------------------------------------------------------------------
-void device::plot_callback(int len1_, std::complex<float> *b1_, int len2_, std::complex<float> *b2_,
-                         int len3_, std::complex<float> *b3_, int len4_, std::complex<float> *b4_)
+void device::error_callback(enum_device_status status_)
 {
-    emit plot_preamble_correlaion(len1_, b1_);
-    emit plot_sfd_correlation(len2_, b2_);
-    emit plot_sfd_synchronize(len3_, b3_);
-    emit plot_constelation(len4_, b4_);
+
+    qDebug() << "error_callback" << status_;
+
+    emit device_status();
+}
+//-----------------------------------------------------------------------------------------
+void device::plot_test_callback(int len_, float *b_)
+{
+    int len = len_ / 2;
+    for(int i = 0; i < len; ++i){
+        data[i].real(b_[2 * i]);
+        data[i].imag(b_[2 * i + 1]);
+    }
+
+    emit plot_test(len, data);
+
+}
+//-----------------------------------------------------------------------------------------
+void device::preamble_correlation_callback(int len_, std::complex<float> *b_)
+{
+    emit plot_preamble_correlaion(len_, b_);
+}
+//-----------------------------------------------------------------------------------------
+void device::sfd_callback(int len1_, std::complex<float> *b1_,
+                          int len2_, std::complex<float> *b2_)
+{
+    emit plot_sfd_correlation(len1_, b1_);
+    emit plot_sfd_synchronize(len2_, b2_);
+}
+//-----------------------------------------------------------------------------------------
+void device::constelation_callback(int len_, std::complex<float> *b_)
+{
+    emit plot_constelation(len_, b_);
 }
 //-----------------------------------------------------------------------------------------
 void device::mpdu_callback(mpdu mpdu_)
 {
-    QString text_capture = "Frame version: ";
-    QStringList list;
-    list.append("");
-    switch (mpdu_.fcf.frame_version) {
-    case 0:
-        text_capture += "IEEE Std 802.15.4-2003.";
-        break;
-    case 1:
-        text_capture += "IEEE Std 802.15.4-2006.";
-        break;
-    case 2:
-        text_capture += "IEEE Std 802.15.4.";
-        break;
-    case 3:
-        text_capture += "Reserved.";
-        break;
-    }
-    QString frame_type;
-    switch (mpdu_.fcf.type){
-    case Frame_type_beacon:
-        frame_type = "Frame type: beacon.";
-        break;
-    case Frame_type_data:
-        frame_type = "Frame type: data";
-        break;
-    case Frame_type_acknowledgment:
-        frame_type = "Frame type: acknowledgment.";
-        break;
-    case Frame_type_MAC_command:
-        frame_type = "Frame type: MAC_command.";
-        break;
-    case Frame_type_reserved:
-        frame_type = "Frame type: reserved.";
-        break;
-    }
-    text_capture += " " + frame_type;
-    list.append(text_capture);
+    emit mac_protocol_data_units(mpdu_);
 
-    QString address;
-    if(mpdu_.af.dest_address == 0){
-        address = "not present";
-    }
-    else{
-        address = "0x" + QString::number(mpdu_.af.dest_address, 16);
-    }
-    text_capture = "Destination PAN 0x" + QString::number(mpdu_.af.dest_pan_id, 16) +
-                   ",  Destination address " + address + ". ";
-
-    if(mpdu_.af.source_pan_id == 0){
-        address = "not present";
-    }
-    else{
-        address = "0x" + QString::number(mpdu_.af.source_pan_id, 16);
-    }
-    text_capture += "Source PAN " + address;
-    if(mpdu_.af.source_address == 0){
-        address = "not present";
-    }
-    else{
-        address = "0x" + QString::number(mpdu_.af.source_address, 16);
-    }
-    text_capture += ",  Source address " + address;
-    list.append(text_capture);
-    QVector<QString> data;
-    data.push_back(QString());
-
-    int idx_char = 0;
-    int slice = 0;
-    QString text("  ");
-    while(idx_char < mpdu_.len_data){
-        uint16_t d = mpdu_.data[idx_char];
-        if(++slice > 32){
-            slice = 0;
-            data.last() += text;
-            text.clear();
-            data.push_back(QString());
-        }
-        if(idx_char % 8 == 0){
-            data.last().append("  ");
-        }
-        if(mpdu_.data[idx_char] < 0x10){
-            data.last().append("0");
-        }
-        data.last().append(QString::number(d, 16) + " ");
-        if(d > 0x1f && d < 0x7f){
-            text.append(d);
-        }
-        else{
-            text.append(".");
-        }
-
-        ++idx_char;
-    }
-    if(slice > 0 && slice < 32){
-        data.last().append("  ");
-        int add_space = (31 - slice) / 8;
-        while(add_space){
-            data.last().append("  ");
-            --add_space;
-        }
-        while(++slice < 32){
-            data.last().append("   ");
-        }
-        data.last() += text;
-    }
-    for(auto &it : data){
-        list.append(it);
-    }
-
-
-    emit get_frame_capture(list);
-
-    struct timeval tv;
-
-    zep_header_data *z_header = (struct zep_header_data *) zep_buffer;
-
-    strncpy(z_header->preamble, ZEP_PREAMBLE, 2);
-    z_header->version = 2;
+    zep_header_data *z_header = (struct zep_header_data *) rx_zep_buffer;
+    strncpy(z_header->header.preamble, ZEP_PREAMBLE, 2);
+    z_header->header.version = 2;
     z_header->type = ZEP_V2_TYPE_DATA;
     z_header->channel_id = channel;
-    z_header->device_id = 0xff;//htobe32(packet->device);
-    z_header->lqi_mode = 1;// mode = 0 lqi, mode = 1 fcs
-    z_header->lqi = 0;//packet->lqi;
-    gettimeofday(&tv, NULL);
-    z_header->timestamp_s = htobe32(tv.tv_sec + EPOCH);
-    z_header->timestamp_ns = htobe32(tv.tv_usec * 1000);
+    z_header->device_id = htobe32(0x00);
+    z_header->lqi_mode = 1; // mode = 0 -> lqi, mode = 1 -> fcs
+    z_header->lqi = 0;      // lqi;
+    // struct timeval tv;
+    // gettimeofday(&tv, NULL);
+    // z_header->timestamp_s = htobe32(tv.tv_sec + EPOCH);
+    // z_header->timestamp_ns = htobe32(tv.tv_usec * 1000);
+    long unsigned tv = QDateTime::currentSecsSinceEpoch();
+    z_header->timestamp_s = htobe32(tv + EPOCH);
+    tv = QDateTime::currentMSecsSinceEpoch();
+    z_header->timestamp_ns = htobe32(tv);
     z_header->sequence++;
     z_header->length = mpdu_.len_data;
-    unsigned char *d = (unsigned char *)mpdu_.data;
-    memcpy(&zep_buffer[sizeof(struct zep_header_data)], d, mpdu_.len_data);
-    int64_t length = sizeof(struct zep_header_data) + mpdu_.len_data;
+    size_t len_header= sizeof(struct zep_header_data);
 
-    tx_socket->writeDatagram((char*)zep_buffer, length, QHostAddress::Any, ZEP_PORT);
+    unsigned char *d = (unsigned char *)mpdu_.data;
+    memcpy(&rx_zep_buffer[len_header], d, mpdu_.len_data);
+    int64_t length = len_header + mpdu_.len_data;
+
+    tx_socket->writeDatagram((char*)rx_zep_buffer, length, QHostAddress::Any, tx_port);
 
 }
 //-----------------------------------------------------------------------------------------
@@ -264,6 +295,9 @@ void device::advanced_settings_dialog()
     case PLUTO:
         pluto->advanced_settings_dialog();
         break;
+    case LIME:
+        lime->advanced_settings_dialog();
+        break;
     case NONE:
         break;
     }
@@ -272,13 +306,14 @@ void device::advanced_settings_dialog()
 void device::set_rx_frequency(int channel_)
 {
     channel = channel_;
+    uint64_t rx_frequency = ieee802_15_4_info::fq_channel_mhz[channel] * 1e6;
 
     switch (type_dev) {
     case PLUTO:
-    {
-        uint64_t rx_frequency = ieee802_15_4_info::fq_channel_mhz[channel] * 1e6;
         pluto->set_rx_frequency(rx_frequency);
-    }
+        break;
+    case LIME:
+        lime->set_rx_frequency(rx_frequency);
         break;
     case NONE:
         break;
@@ -291,10 +326,49 @@ void device::set_rx_hardwaregain(double rx_hardwaregain_)
     case PLUTO:
         pluto->set_rx_hardwaregain(rx_hardwaregain_);
         break;
+    case LIME:
+        lime->set_rx_hardwaregain(rx_hardwaregain_);
+        break;
     case NONE:
         break;
     }
 }
 //-----------------------------------------------------------------------------------------
+void device::set_tx_frequency(int channel_)
+{
+    uint64_t tx_frequency = ieee802_15_4_info::fq_channel_mhz[channel_] * 1e6;
 
+    switch (type_dev) {
+    case PLUTO:
+        pluto->set_tx_frequency(tx_frequency);
+        break;
+    case LIME:
+        lime->set_tx_frequency(tx_frequency);
+        break;
+    case NONE:
+        break;
+    }
+}
+//-----------------------------------------------------------------------------------------
+void device::test_shr()
+{
+    tx_thread_send_data->mutex.lock();
+    tx_thread_send_data->buffer.clear();
+    tx_thread_send_data->ready = true;
+    tx_thread_send_data->mutex.unlock();
+    tx_thread_send_data->cond_value.notify_one();
+}
+//-----------------------------------------------------------------------------------------
+void device::test_test()
+{
+    tx_thread_send_data->mutex.lock();
+    tx_thread_send_data->buffer.clear();
+    for(int i = 0; i < 32; ++i){
+        tx_thread_send_data->buffer.push_back(0xa);
+    }
+    tx_thread_send_data->ready = true;
+    tx_thread_send_data->mutex.unlock();
+    tx_thread_send_data->cond_value.notify_one();
+}
+//-----------------------------------------------------------------------------------------
 
