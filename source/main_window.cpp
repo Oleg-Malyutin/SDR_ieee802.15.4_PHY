@@ -30,6 +30,8 @@ main_window::main_window(QWidget *parent)
     connect(dev, &device::device_status, this, &main_window::device_status);
     connect(this, &main_window::start, dev, &device::start);
     connect(this, &main_window::stop, dev, &device::stop);
+    connect(this, &main_window::test_shr, dev, &device::test_shr);
+    connect(this, &main_window::test_test, dev, &device::test_test);
     connect(ui->actionAdvanced_device_settings, &QAction::triggered,
             dev, &device::advanced_settings_dialog);
     connect(dev, &device::mac_protocol_data_units, this, &main_window::mac_protocol_data_units);
@@ -61,6 +63,7 @@ main_window::main_window(QWidget *parent)
 
     for(int i = 0; i < ieee802_15_4_info::number_of_channels; ++i){
         ui->comboBox_channel->addItem(QString::number(i));
+        ui->comboBox_tx_channel->addItem(QString::number(i));
     }
     ui->comboBox_channel->setCurrentIndex(ieee802_15_4_info::channel);
     ui->verticalSlider->setValue(69);
@@ -128,6 +131,11 @@ void main_window::device_status()
 void main_window::on_comboBox_channel_currentIndexChanged(int index)
 {
     dev->set_rx_frequency(index);
+}
+//-----------------------------------------------------------------------------------------
+void main_window::on_comboBox_tx_channel_currentIndexChanged(int index)
+{
+    dev->set_tx_frequency(index);
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_verticalSlider_valueChanged(int value)
@@ -254,6 +262,8 @@ void main_window::mac_protocol_data_units(mpdu mpdu_)
 //-----------------------------------------------------------------------------------------
 void main_window::on_pushButton_start_clicked()
 {
+    ui->pushButton_start->setEnabled(false);
+    ui->pushButton_stop->setEnabled(true);
     ui->actionAdvanced_device_settings->setEnabled(true);
 
     emit start(name_select_device);
@@ -264,8 +274,22 @@ void main_window::on_pushButton_start_clicked()
 //-----------------------------------------------------------------------------------------
 void main_window::on_pushButton_stop_clicked()
 {
+    ui->pushButton_stop->setEnabled(false);
+    ui->pushButton_start->setEnabled(true);
     ui->actionAdvanced_device_settings->setEnabled(false);
 
     emit stop();
 }
 //-----------------------------------------------------------------------------------------
+void main_window::on_pushButton_shr_clicked()
+{
+    emit test_shr();
+}
+//-----------------------------------------------------------------------------------------
+void main_window::on_pushButton_test_clicked()
+{
+    emit test_test();
+}
+//-----------------------------------------------------------------------------------------
+
+

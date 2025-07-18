@@ -33,11 +33,20 @@ private slots:
 
     void on_pushButton_stop_clicked();
 
+    void on_pushButton_shr_clicked();
+
+    void on_pushButton_test_clicked();
+
+    void on_comboBox_tx_channel_currentIndexChanged(int index);
+
 signals:
     void start(QString name_);
     void stop();
     void set_rx_frequency(long long int rx_frequency_);
     void set_rx_hardwaregain(double rx_hardwaregain_);
+
+    void test_shr();
+    void test_test();
 
 private:
 
