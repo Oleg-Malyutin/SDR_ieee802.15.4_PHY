@@ -45,7 +45,7 @@ struct ieee802_15_4_info{
         O_QPSK
     };
     static const long long int samplerate = SAMPLERATE;
-    static const long long int rf_bandwidth = 2000000;
+    static const long long int rf_bandwidth = 3000000;
     static const int channel = 18;
     static const long long int rf_frequency = fq_channel_mhz[channel] * 1000000;
 };
