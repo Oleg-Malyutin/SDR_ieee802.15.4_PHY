@@ -36,6 +36,7 @@ enum enum_device_status{
 };
 
 typedef struct rx_thread_data {
+    int channel;
     bool ready = false;
     bool stop = false;
     std::condition_variable cond_value;
@@ -74,14 +75,14 @@ typedef struct tx_thread_send_data {
     bool stop = false;
     std::condition_variable cond_value;
     std::mutex mutex;
-    std::vector<char> buffer;
+    std::vector<uint8_t> mdpu;
     void *ctx = nullptr;
     enum_device_status status;
     void reset(){
         ready = false;
         stop = false;
         if(mutex.try_lock()) mutex.unlock();
-        buffer.clear();
+        mdpu.clear();
     }
     ~tx_thread_send_data(){reset();}
 } tx_thread_send_data_t;

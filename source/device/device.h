@@ -20,21 +20,15 @@
 
 #include <stdint.h>
 
-//#include "device/device_thread.h"
 #include "adalm_pluto/pluto_sdr.h"
 #include "limesdr_mini/lime_sdr.h"
 #include "ieee802_15_4/rx_ieee802_15_4.h"
 #include "ieee802_15_4/tx_ieee802_15_4.h"
 
-#define ZEP_BUFFER_SIZE 256
-#define ZEP_PREAMBLE "EX"
-#define ZEP_V2_TYPE_DATA 1
-#define ZEP_V2_TYPE_ACK 2
-#define ZEP_PORT 17754
-
-const unsigned long long EPOCH = 2208988800ULL;
-
-class device : public QObject, public ieee802_15_4_callback, public mpdu_sublayer_callback
+class device : public QObject,
+               public ieee802_15_4_callback,
+               public rx_mpdu_sublayer_callback,
+               public tx_mpdu_sublayer_callback
 {
     Q_OBJECT
 public:
@@ -92,49 +86,21 @@ private:
     bool lime_is_open = false;
     bool lime_is_start = false;
 
+    rx_ieee802_15_4 *rx_dev_ieee802_15_4;
+    std::thread *rx_ieee802_15_4_thread;
+    tx_ieee802_15_4 *tx_dev_ieee802_15_4;
+    std::thread *tx_ieee802_15_4_thread;
+
+    std::complex<float> data[2000];
+
     void error_callback(enum_device_status status_);
     void preamble_correlation_callback(int len_, std::complex<float> *b_);
     void sfd_callback(int len1_, std::complex<float> *b1_,
                       int len2_, std::complex<float> *b2_);
     void constelation_callback(int len_, std::complex<float> *b_);
     void plot_test_callback(int len_, float *b_);
-    void mpdu_callback(mpdu mpdu_);
-
-    rx_ieee802_15_4 *rx_dev_ieee802_15_4;
-    std::thread *rx_ieee802_15_4_thread;
-    tx_ieee802_15_4 *tx_dev_ieee802_15_4;
-    std::thread *tx_ieee802_15_4_thread;
-
-    QUdpSocket *rx_socket;
-    QUdpSocket *tx_socket;
-    unsigned short rx_port;
-    unsigned short tx_port;
-    struct /*__attribute__((__packed__))*/ zep_header {
-        char preamble[2];
-        unsigned char version;
-    };
-    struct /*__attribute__((__packed__))*/ zep_header_ack {
-      zep_header header;
-      unsigned char type;
-      uint32_t sequence = 0;
-    };
-    struct /*__attribute__((__packed__))*/ zep_header_data {
-      zep_header header;
-      unsigned char type;
-      unsigned char channel_id;
-      uint16_t device_id;
-      unsigned char lqi_mode;
-      unsigned char lqi;
-      uint32_t timestamp_s;
-      uint32_t timestamp_ns;
-      uint32_t sequence = 0;
-      unsigned char reserved[10];
-      unsigned char length;
-    };
-
-    unsigned char rx_zep_buffer[ZEP_BUFFER_SIZE];
-
-    std::complex<float> data[2000];
+    void rx_mpdu_callback(mpdu mpdu_);
+    void tx_mpdu_callback(mpdu mpdu_);
 
 };
 
