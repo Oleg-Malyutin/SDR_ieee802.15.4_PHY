@@ -37,7 +37,7 @@ public:
     bool is_started = false;
     void connect_callback(ieee802_15_4_callback *cb_){callback = cb_;};
     void start(rx_thread_data_t *rx_thread_data_);
-    rx_mac_sublayer *mac_layer;
+    rx_mac_sublayer *mac_sublayer;
 
 private:
     void init_local();
@@ -127,7 +127,7 @@ private:
     rx_state state_type = frame_lenght;
     int idx_i = 0;
     int len_psdu = 0;
-    void detection(int &in_len_, int16_t *iq_data_);
+    void detection(int &in_len_, int16_t *iq_data_, int &channel_);
     void reset_detection();
 
     complex plot_data;
@@ -143,7 +143,7 @@ private:
     // thread
     ieee802_15_4_callback *callback;
     void work(rx_thread_data_t *rx_thread_data_);
-    void rx_data(int len_, int16_t *i_buffer_);
+    void rx_data(int len_, int16_t *i_buffer_, int &channel_);
     void stop();
 
     // todo

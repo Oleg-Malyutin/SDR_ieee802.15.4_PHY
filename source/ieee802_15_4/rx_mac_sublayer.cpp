@@ -19,16 +19,19 @@
 //--------------------------------------------------------------------------------------------------
 rx_mac_sublayer::rx_mac_sublayer()
 {
-
+    udp_socket = new UdpSocket;
 }
 //--------------------------------------------------------------------------------------------------
 rx_mac_sublayer::~rx_mac_sublayer()
 {
-
+    delete udp_socket;
 }
 //--------------------------------------------------------------------------------------------------
 void rx_mac_sublayer::start(mac_sublayer_data_t *data_)
 {
+    if(!udp_socket->create(ZEP_PORT)){
+        fprintf(stderr, "rx_mac_sublayer::start() udp_socket->create failed\n");
+    }
     work(data_);
 }
 //--------------------------------------------------------------------------------------------------
@@ -41,7 +44,7 @@ void rx_mac_sublayer::work(mac_sublayer_data_t *data_)
         data->cond_value.wait(read_lock);
         if(data->ready){
             data->ready = false;
-            parser_data(data->mpdu);
+            parser_data(data->mpdu, data->channel);
         }
     }
     data->is_started = false;
@@ -49,7 +52,7 @@ void rx_mac_sublayer::work(mac_sublayer_data_t *data_)
     fprintf(stderr, "rx_mac_sublayer::work() finish\n");
 }
 //--------------------------------------------------------------------------------------------------
-void rx_mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_)
+void rx_mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_, int &channel_)
 {
     int idx_symbol = 0;
     const int len = mpdu_->size();
@@ -123,19 +126,21 @@ void rx_mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_)
             uint16_t b = data[1];
             frame_control += b << 0x8;
 
-            frame_control_field fcf = parser_frame_control(frame_control);
-            fcf.sequence_number = data[2];
+            frame_control_field fcf = parser_frame_control(frame_control, data[2]);
+
             addressing_fields af = parse_addressing(fcf, data);
 
             mpdu m;
-//            for(int i = 0; i < len_data; ++i){
-//                m.data[i] = data[i];
-//            }
+            for(int i = 0; i < len_data; ++i){
+                m.data[i] = data[i];
+            }
             m.fcf = fcf;
             m.af = af;
-            m.data = data;
             m.len_data = len_data;
-            callback->mpdu_callback(m);
+
+            callback->rx_mpdu_callback(m);
+
+            send(m, channel_);
 
 //            qDebug() << "frame control" << QString::number(frame_control, 16);
 //            qDebug() << "frame version" << fcf.frame_version;
@@ -155,7 +160,7 @@ void rx_mac_sublayer::parser_data(std::vector<uint8_t> *mpdu_)
     }
 }
 //--------------------------------------------------------------------------------------------------
-frame_control_field rx_mac_sublayer::parser_frame_control(uint16_t &frame_control_)
+frame_control_field rx_mac_sublayer::parser_frame_control(uint16_t &frame_control_, uint8_t &sequence_number_)
 {
     frame_control_field fcf;
     uint8_t type = frame_control_ & 0x4;
@@ -170,6 +175,7 @@ frame_control_field rx_mac_sublayer::parser_frame_control(uint16_t &frame_contro
     fcf.dest_mode = static_cast<adressing_mode>((frame_control_ & 0xc00) >> 0xa);
     fcf.frame_version = (frame_control_ & 0x3000) >> 0xc;
     fcf.source_mode = static_cast<adressing_mode>((frame_control_ & 0xc000) >> 0xe);
+    fcf.sequence_number = sequence_number_;
 
     return fcf;
 
@@ -245,6 +251,32 @@ addressing_fields rx_mac_sublayer::parse_addressing(frame_control_field &fcf_, u
     af.offset = offset;
 
     return af;
+
+}
+//--------------------------------------------------------------------------------------------------
+void rx_mac_sublayer::send(mpdu &mpdu_, int &channel_)
+{
+    zep_header_data *z_header = (struct zep_header_data *) rx_zep_buffer;
+    strncpy(z_header->header.preamble, ZEP_PREAMBLE, 2);
+    z_header->header.version = 2;
+    z_header->type = ZEP_V2_TYPE_DATA;
+    z_header->channel_id = channel_;
+    z_header->device_id = htobe32(0x00);
+    z_header->lqi_mode = 1; // mode = 0 -> lqi, mode = 1 -> fcs
+    z_header->lqi = 0;      // lqi;
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    z_header->timestamp_s = htobe32(tv.tv_sec + EPOCH);
+    z_header->timestamp_ns = htobe32(tv.tv_usec * 1000);
+    z_header->sequence++;
+    z_header->length = mpdu_.len_data;
+    size_t len_header= sizeof(struct zep_header_data);
+
+    unsigned char *d = (unsigned char *)mpdu_.data;
+    memcpy(&rx_zep_buffer[len_header], d, mpdu_.len_data);
+    int length = len_header + mpdu_.len_data;
+
+    udp_socket->sendto((char*)rx_zep_buffer, length, IpAddress{"127.0.0.1", ZEP_PORT});
 
 }
 //--------------------------------------------------------------------------------------------------

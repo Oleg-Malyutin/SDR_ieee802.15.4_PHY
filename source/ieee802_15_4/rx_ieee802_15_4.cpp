@@ -42,7 +42,7 @@ rx_ieee802_15_4::rx_ieee802_15_4()
     local_imag = new float[16 * LEN_CHIP];
 
     mac_data = new mac_sublayer_data;
-    mac_layer = new rx_mac_sublayer;
+    mac_sublayer = new rx_mac_sublayer;
 
     init_local();
 }
@@ -52,7 +52,7 @@ rx_ieee802_15_4::~rx_ieee802_15_4()
     qDebug() << "ieee802_15_4::~ieee802_15_4() start";
     stop();
     delete mac_data;
-    delete mac_layer;
+    delete mac_sublayer;
     delete[] preamble_correlation_buffer;
     delete[] sfd_correlation_buffer;
     delete[] sfd_synchronize_buffer;
@@ -101,8 +101,9 @@ void rx_ieee802_15_4::start(rx_thread_data_t *rx_thread_data_)
     stop();
     is_started = true;
     swap_mpdu = false;
+    mac_data->channel = rx_thread_data_->channel;
     mac_data->reset();
-    mac_layer_thread = new std::thread(&rx_mac_sublayer::start, mac_layer, mac_data);
+    mac_layer_thread = new std::thread(&rx_mac_sublayer::start, mac_sublayer, mac_data);
     mac_layer_thread->detach();
 
     work(rx_thread_data_);
@@ -130,7 +131,7 @@ void rx_ieee802_15_4::work(rx_thread_data_t *rx_thread_data_)
         rx_thread_data->cond_value.wait(read_lock);
         if(rx_thread_data->ready){
             rx_thread_data->ready = false;
-            rx_data(rx_thread_data->len_buffer, rx_thread_data->ptr_buffer);
+            rx_data(rx_thread_data->len_buffer, rx_thread_data->ptr_buffer, rx_thread_data->channel);
         }
     }
     stop();
@@ -138,14 +139,14 @@ void rx_ieee802_15_4::work(rx_thread_data_t *rx_thread_data_)
     fprintf(stderr, "rx_ieee802_15_4::work() finish\n");
 }
 //--------------------------------------------------------------------------------------------------
-void rx_ieee802_15_4::rx_data(int len_, int16_t *i_buffer_)
+void rx_ieee802_15_4::rx_data(int len_, int16_t *i_buffer_, int &channel_)
 {
 //    fprintf(stderr, "rx_ieee802_15_4::rx_data 0\n");
-    detection(len_, i_buffer_);
+    detection(len_, i_buffer_, channel_);
 //    fprintf(stderr, "rx_ieee802_15_4::rx_data 1\n");
 }
 //--------------------------------------------------------------------------------------------------
-void rx_ieee802_15_4::detection(int &in_len_, int16_t *iq_data_)
+void rx_ieee802_15_4::detection(int &in_len_, int16_t *iq_data_, int &channel_)
 {
     int in_len = in_len_;
     int16_t *iq_data = iq_data_;
@@ -492,6 +493,7 @@ auto start_time = std::chrono::steady_clock::now();
             if(idx_i == (len_psdu * LEN_CHIP * 2)){
 
                 if (mac_data->mutex.try_lock()){
+                    mac_data->channel = channel_;
                     mac_data->mpdu =  p_mpdu;
                     mac_data->ready = true;
                     mac_data->mutex.unlock();
