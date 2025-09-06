@@ -9,7 +9,7 @@ OS: Linux Mint 20 Ulyana 64-bit.
 Processor: Intel© Core™ i5-8600 CPU @ 3.10GHz × 6
 
 Supported devices:
-1. PlutoSDR
+1. PlutoSDR (RX , TX)
 2. ...
 
 Received signal parameters:
