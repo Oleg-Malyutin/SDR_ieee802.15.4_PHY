@@ -1,11 +1,11 @@
 # SDR_ieee802.15.4_PHY
 Software Defined Radio (SDR) used to implement the IEEE 802.15.4 physical layer (PHY)
-(This is just the beginning and only the receiver has been implemented so far)
+(This is just the beginning, and so far only a receiver and a simple transmitter for active scanning have been implemented.)
 
 The project was created using the Qt5 framework.
 
 Tested configurations:
-OS: Linux Mint 20 Ulyana 64-bit.
+OS: Linux Mint 22.1 Xia.
 Processor: Intel© Core™ i5-8600 CPU @ 3.10GHz × 6
 
 Supported devices:
