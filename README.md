@@ -10,7 +10,8 @@ Processor: Intel© Core™ i5-8600 CPU @ 3.10GHz × 6
 
 Supported devices:
 1. PlutoSDR (RX , TX)
-2. ...
+2. HackRF One (With custom firmware. See /device/hackrf_one/firmware/Readme.txt)
+3. ...
 
 Received signal parameters:
 1. O-QPSK (IEEE 802.15.4 - 2003)
@@ -22,6 +23,7 @@ Received signal parameters:
 4. UDP ZEPv2. Support of other Ethernet based hardware to analyze 802.15.4 (https://wiki.wireshark.org/IEEE_802.15.4)
 5. Scan energy detect
 6. Active scan
+7. ...
 
 
 If you find this project useful, consider donating:
