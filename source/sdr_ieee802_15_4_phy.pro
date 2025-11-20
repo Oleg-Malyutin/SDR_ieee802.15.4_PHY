@@ -16,23 +16,98 @@ TARGET = sdr_ieee802_15_4_phy
 
 QT += core gui
 QT += network
-QT += printsupport
+QT += printsupport # for customplot
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
 CONFIG += c++17
 CONFIG += thread
 
 QMAKE_CXXFLAGS += -Ofast
-#QMAKE_CXXFLAGS += -mavx
+QMAKE_CXXFLAGS += -ftree-vectorize
 
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
 #DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
 
+MOC_DIR = tmp
+OBJECTS_DIR = obj
+DESTDIR = ./bin
+unix{
+# Default rules for deployment.
+qnx: target.path = /tmp/$${TARGET}/bin
+else: unix:!android: target.path = /opt/$${TARGET}/bin
+!isEmpty(target.path): INSTALLS += target
+}
+
+# selection of devices (1-on, 0-off)
+plutosdr = 1
+hackrf = 1
+limesdr = 0
+
+equals(plutosdr,1):{
+    QMAKE_CXXFLAGS += -DUSE_PLUTOSDR
+    SOURCES += \
+        device/adalm_pluto/pluto_sdr.cpp \
+        device/adalm_pluto/pluto_sdr_rx.cpp \
+        device/adalm_pluto/pluto_sdr_tx.cpp \
+        device/adalm_pluto/rx_usb_plutosdr.cpp \
+        device/adalm_pluto/sdrusbgadget.cpp \
+        device/adalm_pluto/tx_usb_plutosdr.cpp \
+        device/adalm_pluto/upload_sdrusbgadget.cpp
+    HEADERS += \
+        device/adalm_pluto/pluto_sdr.h \
+        device/adalm_pluto/pluto_sdr_rx.h \
+        device/adalm_pluto/pluto_sdr_tx.h \
+        device/adalm_pluto/rx_usb_plutosdr.h \
+        device/adalm_pluto/sdrusbgadget.h \
+        device/adalm_pluto/tx_usb_plutosdr.h \
+        device/adalm_pluto/upload_sdrusbgadget.h
+    FORMS += \
+        device/adalm_pluto/pluto_sdr.ui
+    DISTFILES += \
+        device/adalm_pluto/resources/S24udc \
+        device/adalm_pluto/resources/runme.sh \
+        device/adalm_pluto/resources/sdr_usb_gadget
+    RESOURCES += \
+        device/adalm_pluto/resources/resources.qrc
+    }
+
+equals(hackrf,1):{
+    QMAKE_CXXFLAGS += -DUSE_HACKRF
+    SOURCES += \
+        device/hackrf_one/hackrf_one.cpp \
+        device/hackrf_one/hackrf_one_rx.cpp \
+        device/hackrf_one/hackrf_one_tx.cpp \
+        device/hackrf_one/libhackrf/hackrf.c \
+        device/hackrf_one/rx_usb_hackrf.cpp
+    HEADERS += \
+        device/hackrf_one/hackrf_one.h \
+        device/hackrf_one/hackrf_one_rx.h \
+        device/hackrf_one/hackrf_one_tx.h \
+        device/hackrf_one/libhackrf/hackrf.h \
+        device/hackrf_one/rx_usb_hackrf.h
+    FORMS += \
+        device/hackrf_one/hackrf_one.ui
+    }
+
+equals(limesdr,1):{
+    QMAKE_CXXFLAGS += -DUSE_LIMESDR
+    SOURCES += \
+        device/limesdr_mini/lime_sdr.cpp \
+        device/limesdr_mini/lime_sdr_rx.cpp \
+        device/limesdr_mini/lime_sdr_tx.cpp
+    HEADERS += \
+        device/limesdr_mini/lime_sdr.h \
+        device/limesdr_mini/lime_sdr_rx.h \
+        device/limesdr_mini/lime_sdr_tx.h
+    FORMS += \
+        device/limesdr_mini/lime_sdr.ui
+    DISTFILES += \
+        device/limesdr_mini/driver/ConnectionRegistry/CMakeLists.txt \
+        device/limesdr_mini/lime_default.cfg
+    }
+
 SOURCES += \
-    device/adalm_pluto/pluto_sdr.cpp \
-    device/adalm_pluto/pluto_sdr_rx.cpp \
-    device/adalm_pluto/pluto_sdr_tx.cpp \
     device/device.cpp \
     higher_layer.cpp \
     ieee802_15_4/mac_sublayer/mac_sublayer.cpp \
@@ -49,9 +124,6 @@ SOURCES += \
 HEADERS += \
     callback_higher_layer.h \
     callback_ui.h \
-    device/adalm_pluto/pluto_sdr.h \
-    device/adalm_pluto/pluto_sdr_rx.h \
-    device/adalm_pluto/pluto_sdr_tx.h \
     device/callback_device.h \
     device/device.h \
     device/device_type.h \
@@ -61,7 +133,6 @@ HEADERS += \
     ieee802_15_4/mac_sublayer/mac_types.h \
     ieee802_15_4/oqpsk_demodulator.h \
     ieee802_15_4/oqpsk_modulator.h \
-    ieee802_15_4/pan_information_base.hh \
     ieee802_15_4/phy_layer/phy_layer.h \
     ieee802_15_4/phy_layer/phy_types.h \
     ieee802_15_4/rf_ieee802_15_4_constants.h \
@@ -74,32 +145,34 @@ HEADERS += \
     utils/zep.h
 
 FORMS += \
-    device/adalm_pluto/pluto_sdr.ui \
     main_window.ui
 
-MOC_DIR = tmp
-OBJECTS_DIR = obj
-DESTDIR = ./bin
-unix{
-# Default rules for deployment.
-qnx: target.path = /tmp/$${TARGET}/bin
-else: unix:!android: target.path = /opt/$${TARGET}/bin
-!isEmpty(target.path): INSTALLS += target
-}
+
 
 unix{
+INCLUDEPATH += /usr/include/libusb-1.0
 LIBS += -lusb-1.0
-LIBS +=  -L"$${DESTDIR}" -liio
+LIBS += -lssh
+LIBS += -liio
+#LIBS += -lad9361
+LIBS += -lLimeSuite
 }
 win32 {
-LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0.dll
+LIBS += -L$$PWD/device/limesdr_mini/driver/ConnectionFTDI/FTD3XXLibrary/x64/ -lFTD3XX
+LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0
 INCLUDEPATH += $$PWD/device/libusb-1.0
 DEPENDPATH += $$PWD/device/libusb-1.0
 LIBS += -L$$PWD/device/adalm_pluto/lib_iio/Windows-VS-2019-x64/ -llibiio
 INCLUDEPATH += $$PWD/device/adalm_pluto/lib_iio/include
 DEPENDPATH += $$PWD/device/adalm_pluto/lib_iio/include
+LIBS += -L$$PWD/device/adalm_pluto/libssh/ -lssh
+INCLUDEPATH += $$PWD/device/adalm_pluto/libssh/include
+DEPENDPATH += $$PWD/device/adalm_pluto/libssh/include
 LIBS += -lws2_32
 }
+
+
+
 
 
 

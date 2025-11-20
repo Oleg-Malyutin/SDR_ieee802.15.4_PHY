@@ -17,6 +17,118 @@
 
 #include <cstring>
 #include <cstdlib>
+/*
+// template<typename T, int LEN>
+// class fifo_buffer
+// {
+// private:
+//     static const unsigned int len = LEN + 1;
+//     static const unsigned int len_buffer = len * 2 - 1;
+//     T *ptr_buffer = (T*)malloc(sizeof(T) * (len_buffer));
+//     static const unsigned int len_copy = len - 1;
+//     unsigned int idx = len_copy;
+
+// public:
+//     fifo_buffer(){ reset(); }
+//     ~fifo_buffer() { free(ptr_buffer); }
+
+//     T data(T &_in)
+//     {
+//         if(idx == len_buffer){
+//             idx = len_copy;
+//             T* b = ptr_buffer + len;
+//             for(unsigned int i = 0; i < len_copy; ++i){
+//                 ptr_buffer[i] = b[i];
+//             }
+//         }
+//         ptr_buffer[idx++] = _in;
+
+//         return ptr_buffer[idx - len];
+
+//     }
+
+//     T data()
+//     {
+//         return ptr_buffer[idx - len];
+//     }
+
+
+//     T* buffer(T &_in)
+//     {
+//         if(idx == len_buffer){
+//             idx = len_copy;
+//             T* b = ptr_buffer + len;
+//             for(unsigned int i = 0; i < len_copy; ++i){
+//                 ptr_buffer[i] = b[i];
+//             }
+//         }
+//         ptr_buffer[idx++] = _in;
+
+//         return ptr_buffer + idx - len;
+
+//     }
+
+//     T* buffer()
+//     {
+//         return ptr_buffer + idx - len;
+//     }
+
+//     void reset()
+//     {
+//         memset(ptr_buffer, 0, sizeof(T) * len_buffer);
+//         idx = len;
+//     }
+// };
+*/
+
+template<typename T, int LEN>
+class fifo_buffer
+{
+private:
+    static constexpr int len = LEN + 1;
+    T *ptr_buffer = (T*)malloc(sizeof(T) * len * 2);
+    int idx = 0;
+
+public:
+    fifo_buffer(){ reset();}
+    ~fifo_buffer() { free(ptr_buffer); }
+
+    void reset(){
+        idx = 0;
+        memset(ptr_buffer, 0, sizeof(T) * static_cast<unsigned int>(len * 2));
+    }
+
+    T data(const T &_in)
+    {
+        ptr_buffer[idx] = _in;
+        ptr_buffer[idx + len] = _in;
+        idx++;
+        idx = idx % len;
+
+        return ptr_buffer[idx];
+    }
+
+    T data()
+    {
+        return ptr_buffer[idx];
+    }
+
+    T* buffer(const T &_in)
+    {
+        ptr_buffer[idx] = _in;
+        ptr_buffer[idx + len] = _in;
+        idx++;
+        idx = idx % len;
+
+        return &ptr_buffer[idx];
+    }
+
+    T* buffer()
+    {
+        return &ptr_buffer[idx];
+    }
+
+};
 
 template<typename T, int DELAY>
 class delay_buffer
@@ -38,68 +150,6 @@ public:
         return buffer[idx];
     }
     void reset(){ memset(buffer, 0, sizeof(T) * len);}
-};
-
-template<typename T, int LEN>
-class fifo_buffer
-{
-private:
-    static const unsigned int len = LEN + 1;
-    static const unsigned int len_buffer = len * 2 - 1;
-    T *ptr_buffer = (T*)malloc(sizeof(T) * (len_buffer));
-    static const unsigned int len_copy = len - 1;
-    unsigned int idx = len_copy;
-
-public:
-    fifo_buffer(){ reset(); }
-    ~fifo_buffer() { free(ptr_buffer); }
-
-    T data(T &_in)
-    {
-        if(idx == len_buffer){
-            idx = len_copy;
-            T* b = ptr_buffer + len;
-            for(unsigned int i = 0; i < len_copy; ++i){
-                ptr_buffer[i] = b[i];
-            }
-        }
-        ptr_buffer[idx++] = _in;
-
-        return ptr_buffer[idx - len];
-
-    }
-
-    T data()
-    {
-        return ptr_buffer[idx - len];
-    }
-
-
-    T* buffer(T &_in)
-    {
-        if(idx == len_buffer){
-            idx = len_copy;
-            T* b = ptr_buffer + len;
-            for(unsigned int i = 0; i < len_copy; ++i){
-                ptr_buffer[i] = b[i];
-            }
-        }
-        ptr_buffer[idx++] = _in;
-
-        return ptr_buffer + idx - len;
-
-    }
-
-    T* buffer()
-    {
-        return ptr_buffer + idx - len;
-    }
-
-    void reset()
-    {
-        memset(ptr_buffer, 0, sizeof(T) * len_buffer);
-        idx = len;
-    }
 };
 
 template<typename T, int LEN>
@@ -128,6 +178,7 @@ public:
         sum = 0;
     }
 };
+
 
 
 #endif // BUFFERS_HH

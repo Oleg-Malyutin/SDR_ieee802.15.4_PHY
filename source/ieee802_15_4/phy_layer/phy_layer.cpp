@@ -7,7 +7,7 @@ phy_layer::phy_layer()
 {
     phy_pib = new phy_pib_t;
 
-    rx_sap = new rx_psdu_t;
+    rx_sap = new rx_sap_t;
 
     demodulator = new oqpsk_demodulator;
     demodulator->connect_phy(this);
@@ -49,7 +49,9 @@ void phy_layer::start(rx_thread_data_t *rx_thread_data_,
     modulator_thread->detach();
 
     rx_thread_data = rx_thread_data_;
-    rx_sap->mode = rx_mode_data;
+    rx_thread_data->set_mode = rx_mode_data;
+    rx_sap->set_mode = rx_mode_data;
+    rx_sap->mode = rx_sap->set_mode;
     demodulator_thread = new std::thread(&oqpsk_demodulator::start, demodulator,
                                          rx_thread_data, rx_sap);
     demodulator_thread->detach();
@@ -73,6 +75,10 @@ void phy_layer::stop()
             rx_thread_data->ready = false;
             rx_thread_data->stop_demodulator = true;
             rx_thread_data->condition_value.notify_all();
+            rx_sap->ready = false;
+            rx_sap->condition.notify_all();
+            rx_sap->ready_confirm = false;
+            rx_sap->condition_confirm.notify_all();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
         delete demodulator_thread;
@@ -105,30 +111,35 @@ void phy_layer::stop()
 void phy_layer::work()
 {
     start_on = true;
-    std::unique_lock<std::mutex> read_lock(event_mutex);
+    std::unique_lock<std::mutex> read_lock(rx_sap->mutex);
     while (start_on){
-        event.wait(read_lock);
-        if(event_ready){
-            event_ready = false;
-            switch (event_mode) {
-            case CCA_REQUEST:
-                event_mode = CCA_CONFIRM;
-                break;
-            case CCA_CONFIRM:
-                break;
-            case TX:
-//                tx_data();
-                break;
-            case RX:
+        rx_sap->condition.wait(read_lock);
+        if(rx_sap->ready){
+            switch (rx_sap->mode) {
+            case rx_mode_data:
                 rx_data();
+                break;
+            case rx_mode_rssi:
+                break;
+            case rx_mode_off:
                 break;
             }
         }
-
-//        fprintf(stderr, "phy_layer::work() event_mode = %d\n", event_mode);
+//fprintf(stderr, "phy_layer::work() event_mode = %d   rx_sap->mode = %d\n", event_mode, rx_sap->mode);
     }
     stop();
     fprintf(stderr, "phy_layer::work() phy_layer::work() finish\n");
+}
+//--------------------------------------------------------------------------------------------------
+void phy_layer::callback_demodulator_rssi()
+{
+    rx_sap->mutex_rssi.lock();
+
+    rx_sap->ready_rssi = true;
+    rx_sap->set_mode = rx_mode_data;
+
+    rx_sap->mutex_rssi.unlock();
+    rx_sap->condition_rssi.notify_one();
 }
 //--------------------------------------------------------------------------------------------------
 plme_ed_confirm_t phy_layer::plme_ed_request()
@@ -137,12 +148,17 @@ plme_ed_confirm_t phy_layer::plme_ed_request()
     plme_ed_confirm.energy_level = 0;
     plme_ed_confirm.status = SUCCESS;
 
-    std::unique_lock<std::mutex> read_lock(rx_sap->mutex);
-    rx_sap->ready = false;
-    rx_sap->mode = rx_mode_rssi;
-    while(!rx_sap->ready){
-        if(rx_sap->condition.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
-            plme_ed_confirm.energy_level = ((min_rssi - rx_sap->rssi) / min_rssi) * 254.0;
+    std::unique_lock<std::mutex> read_lock(rx_sap->mutex_rssi);
+    rx_sap->ready_rssi = false;
+    rx_sap->set_mode = rx_mode_rssi;
+    while(1){
+        if(rx_sap->condition_rssi.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
+            if(rx_sap->ready_rssi){
+                plme_ed_confirm.energy_level = ((min_rssi - rx_sap->rssi) / min_rssi) * 254.0;
+
+                break;
+
+            }
         }
         else{
             plme_ed_confirm.status = BUSY_RX;
@@ -154,38 +170,63 @@ plme_ed_confirm_t phy_layer::plme_ed_request()
 
     return plme_ed_confirm;
 }
-//------------------------------------------------------------------------------------------------------
-void phy_layer::callback_demodulator_rssi()
+//--------------------------------------------------------------------------------------------------
+status_t phy_layer::plme_cca_request()
 {
-    // TODO modulator_status_->succes
-    rx_sap->mode = rx_mode_off;
-    rx_sap->ready = true;
-    rx_sap->condition.notify_one();
+    status_t status;
+    if(rx_sap->is_signal){
+        status = BUSY;
+
+        return status;
+
+    }
+
+    status = IDLE;
+    std::unique_lock<std::mutex> read_lock(rx_sap->mutex_rssi);
+    rx_sap->ready_rssi = false;
+    rx_sap->set_mode = rx_mode_rssi;
+    while(1){
+        if(rx_sap->condition_rssi.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
+            if(rx_sap->ready_rssi){
+                if(rx_sap->rssi > -75.0){
+                    status = BUSY;
+                }
+
+                break;
+
+            }
+        }
+        else{
+            status = BUSY_RX;
+
+            break;
+
+        }
+    }
+
+    return status;
+
 }
 //--------------------------------------------------------------------------------------------------
 void phy_layer::callback_demodulator_rx()
 {
-    event_mutex.lock();
+    rx_sap->mutex.lock();
 
-    int len_symbols = rx_sap->len_symbols;
-    uint8_t *data = rx_sap->symbols;
-    rx_symbols.resize(len_symbols);
-    for(int i = 0 ; i < len_symbols; ++i){
-        rx_symbols[i] = data[i];
-    }
     rx_sap->ready = true;
 
-    event_ready = true;
-    event_mode = RX;
-    event_mutex.unlock();
-    event.notify_one();
+    rx_sap->mutex.unlock();
+    rx_sap->condition.notify_one();
 //    fprintf(stderr, "rx_sap_callback: RX_sap_thread_id %lld\n", std::this_thread::get_id());
 }
 //--------------------------------------------------------------------------------------------------
 void phy_layer::rx_data()
 {
     int idx_symbol = 0;
-    const int len = rx_symbols.size();
+//    const int len = rx_symbols.size();
+
+    int len = rx_sap->len_symbols;
+    uint8_t *rx_symbols = rx_sap->symbols;
+
     int len_psdu = 0;
     if(len > 0 && len <= MaxPHYPacketSize * 2){
         uint8_t octet;// 8 bits
@@ -265,38 +306,6 @@ void phy_layer::rx_data()
     }
 }
 //--------------------------------------------------------------------------------------------------
-status_t phy_layer::plme_cca_request()
-{
-    status_t status;
-    if(rx_sap->is_signal){
-        status = BUSY;
-
-        return status;
-
-    }
-
-    status = IDLE;
-    std::unique_lock<std::mutex> read_lock(rx_sap->mutex);
-    rx_sap->ready = false;
-    rx_sap->mode = rx_mode_rssi;
-    while(!rx_sap->ready){
-        if(rx_sap->condition.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
-            if(rx_sap->rssi > -75.0){
-                status = BUSY;
-            }
-        }
-        else{
-            status = BUSY_RX;
-
-            break;
-
-        }
-    }
-
-    return status;
-
-}
-//--------------------------------------------------------------------------------------------------
 status_t phy_layer::pd_data_request(pd_data_request_t *pd_data_)
 {
     psdu.resize(pd_data_->mpdu_length);
@@ -366,41 +375,37 @@ void phy_layer::tx_data(std::vector<uint8_t> *psdu_)
     tx_sap->cond_value.notify_one();
 }
 //--------------------------------------------------------------------------------------------------
-plme_get_confirm_t phy_layer::plme_get_request(pib_attribute_t attribute_)
-{
-    plme_get_confirm_t plme_get_confirm;
-    plme_get_confirm.pib_atribute = attribute_;
-    plme_get_confirm.status = SUCCESS;
-
-    switch (plme_get_confirm.pib_atribute) {
-    case phyCurrentChannel:
-        plme_get_confirm.value = &phy_pib->current_channel;
-        break;
-    case phyChannelsSupported:
-        plme_get_confirm.value = &phy_pib->channels_supported;
-        break;
-    case phyTransmitPower:
-        plme_get_confirm.value = &phy_pib->transmit_power;
-        break;
-    case phyCCAMode:
-        plme_get_confirm.value = &phy_pib->cca_mode;
-        break;
-    default:
-        plme_get_confirm.status = UNSUPPORTED_ATTRIBUTE;
-        break;
-    }
-
-    return plme_get_confirm;
-}
-//--------------------------------------------------------------------------------------------------
-status_t phy_layer::plme_set_trx_state_request(status_t status_)
+status_t phy_layer::plme_set_trx_state_request(status_t state_)
 {
     status_t status = SUCCESS;
-    switch (status_) {
+    switch (state_) {
     case RX_ON:
-        rx_sap->mode = rx_mode_data;
-        rx_sap->ready = true;
-        rx_sap->condition.notify_one();
+
+        rx_sap->set_mode = rx_mode_data;
+
+        break;
+    {
+        rx_sap->ready_confirm = false;
+        std::unique_lock<std::mutex> read_lock(rx_sap->mutex_confirm);
+        rx_sap->set_mode = rx_mode_data;
+        while(1){
+            if(rx_sap->condition_confirm.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
+                if(rx_sap->ready_confirm){
+                    if(rx_sap->mode == rx_mode_data){
+fprintf(stderr, "phy_layer::plme_set_trx_state_request: SUCCESS\n");
+                        break;
+
+                    }
+                }
+            }
+            else{
+                status = TRX_OFF;
+fprintf(stderr, "phy_layer::plme_set_trx_state_request: TRX_OFF\n");
+                break;
+
+            }
+        }
+    }
         break;
     case TRX_OFF:
         break;
@@ -453,5 +458,32 @@ plme_set_confirm_t phy_layer::plme_set_request(pib_attribute_t attribute_, void 
 
     return plme_set_confirm;
 
+}
+//--------------------------------------------------------------------------------------------------
+plme_get_confirm_t phy_layer::plme_get_request(pib_attribute_t attribute_)
+{
+    plme_get_confirm_t plme_get_confirm;
+    plme_get_confirm.pib_atribute = attribute_;
+    plme_get_confirm.status = SUCCESS;
+
+    switch (plme_get_confirm.pib_atribute) {
+    case phyCurrentChannel:
+        plme_get_confirm.value = &phy_pib->current_channel;
+        break;
+    case phyChannelsSupported:
+        plme_get_confirm.value = &phy_pib->channels_supported;
+        break;
+    case phyTransmitPower:
+        plme_get_confirm.value = &phy_pib->transmit_power;
+        break;
+    case phyCCAMode:
+        plme_get_confirm.value = &phy_pib->cca_mode;
+        break;
+    default:
+        plme_get_confirm.status = UNSUPPORTED_ATTRIBUTE;
+        break;
+    }
+
+    return plme_get_confirm;
 }
 //--------------------------------------------------------------------------------------------------

@@ -30,6 +30,13 @@ main_window::main_window(QWidget *parent)
     qRegisterMetaType<mpdu_analysis_t>();
 
     dev = new device;
+    thread_dev = new QThread;
+    dev->moveToThread(thread_dev);
+    connect(this, &main_window::finished, dev, &device::deleteLater);
+    connect(this, &main_window::finished, thread_dev, &QThread::quit, Qt::DirectConnection);
+    connect(thread_dev, &QThread::finished, thread_dev, &QThread::deleteLater);
+    thread_dev->start();
+    dev->start();
     dev->phy->mac->connect_ui(this);
     connect(this, &main_window::send_channel_scan,
             this, &main_window::show_channel_scan);
@@ -56,8 +63,10 @@ main_window::main_window(QWidget *parent)
     connect(dev, &device::device_found, this, &main_window::device_found);
     connect(dev, &device::remove_device, this, &main_window::remove_device);
     connect(dev, &device::device_status, this, &main_window::device_status);
-    connect(this, &main_window::start, dev, &device::start);
-    connect(this, &main_window::stop, dev, &device::stop);
+    connect(dev, &device::device_open, this, &main_window::device_open);
+    connect(this, &main_window::open_device, dev, &device::open_device);
+    connect(this, &main_window::device_start, dev, &device::device_start);
+    connect(this, &main_window::device_stop, dev, &device::device_stop);
     connect(this, &main_window::test_test, dev, &device::test_test);
     connect(ui->actionAdvanced_device_settings, &QAction::triggered,
             dev, &device::advanced_settings_dialog);
@@ -67,22 +76,22 @@ main_window::main_window(QWidget *parent)
     plot_constelation = new plot(ui->plot_constelation,
                                  type_graph::type_constelation, "Packet detection");
     connect(dev, &device::plot_constelation,
-            plot_constelation, &plot::replace_constelation, Qt::QueuedConnection);
+            this, &main_window::constelation, Qt::QueuedConnection);
 
     plot_sfd_correlation = new plot(ui->plot_sfd_correlation,
                                     type_graph::type_oscilloscope_2, "SFD correlation");
     connect(dev, &device::plot_sfd_correlation,
-            plot_sfd_correlation, &plot::replace_oscilloscope, Qt::QueuedConnection);
+            this, &main_window::sfd_correlation, Qt::QueuedConnection);
 
     plot_sfd_synchronize = new plot(ui->plot_sfd_synchronize,
                                     type_graph::type_oscilloscope_2, "SFD synchronize");
     connect(dev, &device::plot_sfd_synchronize,
-            plot_sfd_synchronize, &plot::replace_oscilloscope, Qt::QueuedConnection);
+            this, &main_window::sfd_synchronize, Qt::QueuedConnection);
 
     plot_preamble_correlation = new plot(ui->plot_preamble_correlaion,
                                          type_graph::type_oscilloscope_2, "Preamble correlaion");
     connect(dev, &device::plot_preamble_correlaion,
-            plot_preamble_correlation, &plot::replace_oscilloscope, Qt::QueuedConnection);
+            this, &main_window::preamble_correlaion, Qt::QueuedConnection);
 
     plot_test = new plot(ui->plot_trnsmitter,
                          type_graph::type_oscilloscope_2, "Test");
@@ -119,8 +128,7 @@ main_window::~main_window()
     delete plot_sfd_correlation;
     delete plot_sfd_synchronize;
     delete plot_preamble_correlation;
-    delete hig_layer;
-    delete dev;
+
     delete ui;
     qDebug() << "main_window::~main_window() stop";
 }
@@ -130,12 +138,15 @@ void main_window::device_found(QString name_)
     QList<QAction*> actions = ui->menuOpen_device->actions();
     for(const auto &action : actions){
         if(action->text() == name_){
+
             return;
+
         }
     }
     QAction *action = new QAction(name_);
     ui->menuOpen_device->addAction(action);
     connect(action, &QAction::triggered, this, [this, v = name_]{ select_device(v);});
+    device_status("Device " + name_ + " found. " + "Select in menu File ...");
 }
 //-----------------------------------------------------------------------------------------
 void main_window::select_device(QString name_)
@@ -143,11 +154,11 @@ void main_window::select_device(QString name_)
     name_select_device = name_;
     for(auto &action : ui->menuOpen_device->actions()){
         if(action->text() ==  name_select_device){
-            action->setEnabled(false);
-            ui->pushButton_start->setEnabled(true);
-        }
-        else{
-            action->setEnabled(true);
+            ui->menuOpen_device->setEnabled(false);
+            ui->pushButton_start->setEnabled(false);
+
+            emit open_device(name_select_device);
+
         }
     }
 }
@@ -165,9 +176,45 @@ void main_window::remove_device(QString name_)
     }
 }
 //-----------------------------------------------------------------------------------------
-void main_window::device_status()
+void main_window::device_open()
 {
-    dev->stop();
+    device_status("Device selected. Press Start...");
+    ui->pushButton_start->setEnabled(true);
+}
+//-----------------------------------------------------------------------------------------
+void main_window::device_status(QString status_)
+{
+    show_status.append(status_);
+    show_status.removeDuplicates();
+    ui->textBrowser_capture->clear();
+    for(auto &it : show_status){
+        ui->textBrowser_capture->append(it);
+    }
+}
+//-----------------------------------------------------------------------------------------
+void main_window::on_pushButton_start_clicked()
+{
+    ui->pushButton_start->setEnabled(false);
+    ui->pushButton_stop->setEnabled(true);
+    ui->actionAdvanced_device_settings->setEnabled(true);
+    ui->groupBox_scan->setEnabled(true);
+    ui->textBrowser_capture->clear();
+
+    emit device_start(name_select_device);
+
+//    on_comboBox_channel_currentIndexChanged(ui->comboBox_channel->currentIndex());
+//    on_verticalSlider_valueChanged(ui->verticalSlider->value());
+}
+//-----------------------------------------------------------------------------------------
+void main_window::on_pushButton_stop_clicked()
+{
+    ui->pushButton_stop->setEnabled(false);
+    ui->pushButton_start->setEnabled(true);
+    ui->actionAdvanced_device_settings->setEnabled(false);
+    ui->groupBox_scan->setEnabled(false);
+    ui->menuOpen_device->setEnabled(true);
+
+    emit device_stop();
 }
 //-----------------------------------------------------------------------------------------
 void main_window::on_comboBox_channel_currentIndexChanged(int index)
@@ -185,6 +232,46 @@ void main_window::on_verticalSlider_valueChanged(int value)
     double gain_db = value;
     ui->label_gain_db->setText(QString::number(gain_db) + "dB");
     dev->set_rx_hardwaregain(gain_db);
+}
+//-----------------------------------------------------------------------------------------
+void main_window::preamble_correlaion(int len_plot_, std::complex<float>* plot_buffer_)
+{
+    std::vector<std::complex<float>> buffer;
+    buffer.resize(len_plot_);
+    for(int i = 0; i < len_plot_; ++i){
+        buffer[i] = plot_buffer_[i];
+    }
+    plot_preamble_correlation->replace_oscilloscope(len_plot_, buffer.data());
+}
+//-----------------------------------------------------------------------------------------
+void main_window::sfd_correlation(int len_plot_, std::complex<float>* plot_buffer_)
+{
+    std::vector<std::complex<float>> buffer;
+    buffer.resize(len_plot_);
+    for(int i = 0; i < len_plot_; ++i){
+        buffer[i] = plot_buffer_[i];
+    }
+    plot_sfd_correlation->replace_oscilloscope(len_plot_, buffer.data());
+}
+//-----------------------------------------------------------------------------------------
+void main_window::sfd_synchronize(int len_plot_, std::complex<float>* plot_buffer_)
+{
+    std::vector<std::complex<float>> buffer;
+    buffer.resize(len_plot_);
+    for(int i = 0; i < len_plot_; ++i){
+        buffer[i] = plot_buffer_[i];
+    }
+    plot_sfd_synchronize->replace_oscilloscope(len_plot_, buffer.data());
+}
+//-----------------------------------------------------------------------------------------
+void main_window::constelation(int len_plot_, std::complex<float>* plot_buffer_)
+{
+    std::vector<std::complex<float>> buffer;
+    buffer.resize(len_plot_);
+    for(int i = 0; i < len_plot_; ++i){
+        buffer[i] = plot_buffer_[i];
+    }
+    plot_constelation->replace_constelation(len_plot_, buffer.data());
 }
 //-----------------------------------------------------------------------------------------
 void main_window::mac_protocol_data_units(mpdu_analysis_t *mpdu_)
@@ -305,29 +392,6 @@ void main_window::mac_protocol_data_units(mpdu_analysis_t *mpdu_)
    }
 }
 //-----------------------------------------------------------------------------------------
-void main_window::on_pushButton_start_clicked()
-{
-    ui->pushButton_start->setEnabled(false);
-    ui->pushButton_stop->setEnabled(true);
-    ui->actionAdvanced_device_settings->setEnabled(true);
-    ui->groupBox_scan->setEnabled(true);
-
-    emit start(name_select_device);
-
-//    on_comboBox_channel_currentIndexChanged(ui->comboBox_channel->currentIndex());
-//    on_verticalSlider_valueChanged(ui->verticalSlider->value());
-}
-//-----------------------------------------------------------------------------------------
-void main_window::on_pushButton_stop_clicked()
-{
-    ui->pushButton_stop->setEnabled(false);
-    ui->pushButton_start->setEnabled(true);
-    ui->actionAdvanced_device_settings->setEnabled(false);
-    ui->groupBox_scan->setEnabled(false);
-
-    emit stop();
-}
-//-----------------------------------------------------------------------------------------
 void main_window::on_pushButton_scan_clicked()
 {
     ui->pushButton_scan->setEnabled(false);
@@ -387,7 +451,7 @@ void main_window::show_energy_detect(uint8_t channel_, uint8_t energy_level_)
     for(; idx_row <  ui->tableWidget_scan_info->rowCount(); ++idx_row){
         if(channel == ui->tableWidget_scan_info->item(idx_row,0)->text()){
             ready = true;
-            ui->tableWidget_scan_info->item(idx_row,2)->setText(energy_level);
+            ui->tableWidget_scan_info->item(idx_row,1)->setText(energy_level);
         }
     }
     if(!ready){
@@ -409,16 +473,19 @@ void main_window::show_active_detect(uint8_t channel_, uint16_t pan_id_, uint64_
     QString channel(QString::number(channel_));
     QString pan_id("0x" + QString::number(pan_id_, 16));
     QString address("0x" + QString::number(address_, 16));
+    QString new_text = pan_id + ":" + address;
     bool ready = false;
     int idx_row = 0;
     for(; idx_row <  ui->tableWidget_scan_info->rowCount(); ++idx_row){
         if(channel == ui->tableWidget_scan_info->item(idx_row,0)->text()){
             ready = true;
-            QString add = ui->tableWidget_scan_info->item(idx_row,2)->text();
-            if(add != ""){
-                pan_id = ", " + pan_id;
+            QString current_text = ui->tableWidget_scan_info->item(idx_row,2)->text();
+            if(!current_text.contains(new_text)){
+                if(current_text != ""){
+                    current_text += ", ";
+                }
+                ui->tableWidget_scan_info->item(idx_row,2)->setText(current_text + new_text);
             }
-            ui->tableWidget_scan_info->item(idx_row,2)->setText(add + pan_id + ":" + address);
         }
     }
     if(!ready){

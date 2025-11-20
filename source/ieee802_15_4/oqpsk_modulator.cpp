@@ -140,7 +140,7 @@ status_t oqpsk_modulator::tx_data(std::vector<uint8_t> *psdu_symbols_)
         }
     }
 
-    int len_samples = offset + SHIFT_IQ;
+    uint len_samples = offset + SHIFT_IQ;
 
     callback_tx_data->tx_data(len_samples, ppdu_samples);
 

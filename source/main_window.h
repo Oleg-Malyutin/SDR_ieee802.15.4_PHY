@@ -31,8 +31,14 @@ public:
 
 private slots:
     void device_found(QString name_);
+    void device_open();
     void remove_device(QString name_);
-    void device_status();
+    void device_status(QString status_);
+
+    void preamble_correlaion(int len_plot_, std::complex<float>* plot_buffer_);
+    void sfd_correlation(int len_plot_, std::complex<float>* plot_buffer_);
+    void sfd_synchronize(int len_plot_, std::complex<float>* plot_buffer_);
+    void constelation(int len_plot_, std::complex<float>* plot_buffer_);
 
     void on_comboBox_channel_currentIndexChanged(int index);
     void on_verticalSlider_valueChanged(int value);
@@ -60,8 +66,9 @@ private slots:
     void on_pushButton_start_new_pan_clicked();
 
 signals:
-    void start(QString name_);
-    void stop();
+    void open_device(QString name_);
+    void device_start(QString name_);
+    void device_stop();
     void finished();
     void set_rx_frequency(long long int rx_frequency_);
     void set_rx_hardwaregain(double rx_hardwaregain_);
@@ -83,10 +90,12 @@ private:
 
     higher_layer *hig_layer;
     QThread *thread_hig_layer;
-    device *dev;
 
+    QThread *thread_dev;
+    device *dev;
     void select_device(QString name_);
     QString name_select_device;
+    QStringList show_status;
 
     plot *plot_preamble_correlation = nullptr;
     plot *plot_constelation = nullptr;

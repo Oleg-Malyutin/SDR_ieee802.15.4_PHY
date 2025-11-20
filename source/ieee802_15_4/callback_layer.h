@@ -23,7 +23,7 @@ public:
     virtual status_t  plme_cca_request()=0;
     virtual plme_ed_confirm_t plme_ed_request()=0;
     virtual plme_get_confirm_t plme_get_request(pib_attribute_t attribute_)=0;
-    virtual status_t plme_set_trx_state_request(status_t status_)=0;
+    virtual status_t plme_set_trx_state_request(status_t state_)=0;
     virtual plme_set_confirm_t plme_set_request(pib_attribute_t attribute_, void *value_)=0;
 };
 

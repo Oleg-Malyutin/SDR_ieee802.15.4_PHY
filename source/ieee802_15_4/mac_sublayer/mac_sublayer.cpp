@@ -299,6 +299,7 @@ addressing_fields mac_sublayer::parse_addressing(frame_control_field &fcf_)
     mpdu->fcf = fcf_;
     mpdu->af = af;
     mpdu->len_data = len_data;
+
     callback_mpdu->rx_mpdu(mpdu);
 
     return af;
@@ -539,12 +540,15 @@ mlme_scan_confirm_t mac_sublayer::mlme_active_scan(scan_type_t scan_type_, uint3
     std::unique_lock<std::mutex> read_lock(wait_confirm.mutex);
     uint32_t unscanned_shannels = 0;
 
+//    scan_current_channel = 15;
+
     for(; scan_current_channel < 27; ++scan_current_channel) {
         // shift the bitmask and compare to the channel mask
         if (scan_channels_ & (1UL << scan_current_channel)){
 
             int nb = 0;
             bool scaned = false;
+            int num_scan = 1;
 
             if(callback_plme->plme_set_request(phyCurrentChannel, &scan_current_channel).status == SUCCESS){
 

@@ -61,32 +61,35 @@ typedef struct{
     cca_mode_t cca_mode;
 } phy_pib_t;
 
-typedef struct rx_psdu_tag{
+typedef struct rx_sap_tag{
+    rx_mode set_mode;
     rx_mode mode;
     int channel;
-    bool ready;
-    double rssi;
+
     bool is_signal = false;
     int len_symbols;
     uint8_t *symbols;
+    bool ready;
     std::mutex mutex;
     std::condition_variable condition;
-} rx_psdu_t;
 
+    double rssi;
+    bool ready_rssi;
+    std::mutex mutex_rssi;
+    std::condition_variable condition_rssi;
 
-typedef struct {
-    uint8_t mpdu_length;
-    uint8_t mpdu[MaxPHYPacketSize];
-    uint8_t ppdu_link_quality;
-} pd_data_indication_t;
+    bool ready_confirm;
+    std::condition_variable condition_confirm;
+    std::mutex mutex_confirm;
 
-typedef struct rf_sap_tag{
-    int channel = 11;
-    bool is_started = false;
+    status_t status;
+} rx_sap_t;
+
+typedef struct tx_sap_tag{
+    int channel;
     bool ready = false;
     bool stop = false;
     status_t status;
-    double rssi = 0;
     std::condition_variable cond_value;
     std::mutex mutex;
     bool ready_confirm = false;
@@ -99,6 +102,12 @@ typedef struct {
     uint8_t mpdu_length;
     uint8_t mpdu[MaxPHYPacketSize];
 } pd_data_request_t;
+
+typedef struct {
+    uint8_t mpdu_length;
+    uint8_t mpdu[MaxPHYPacketSize];
+    uint8_t ppdu_link_quality;
+} pd_data_indication_t;
 
 typedef struct{
     status_t status;

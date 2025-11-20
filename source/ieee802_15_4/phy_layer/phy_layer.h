@@ -45,7 +45,7 @@ private:
     std::thread *m_sublayer_thread;
     mac_sublayer_callback *callback_mac;
 
-    rx_psdu_t *rx_sap;
+    rx_sap_t *rx_sap;
     rx_thread_data_t *rx_thread_data;
     std::thread *demodulator_thread;
     void callback_demodulator_rx();
@@ -71,7 +71,7 @@ private:
     phy_pib_t *phy_pib;
     status_t status;
     plme_get_confirm_t plme_get_request(pib_attribute_t attribute_);
-    status_t plme_set_trx_state_request(status_t status_);
+    status_t plme_set_trx_state_request(status_t state_);
     plme_set_confirm_t  plme_set_request(pib_attribute_t attribute_, void *value_);
 
     constexpr static uint16_t CRC_CCITT_TABLE[256] =

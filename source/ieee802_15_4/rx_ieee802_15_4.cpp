@@ -12,46 +12,43 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-#include "oqpsk_demodulator.h"
+#include "rx_ieee802_15_4.h"
 
 #include <iostream>
 #include <cmath>
-#if !(defined(WIN32) || defined(WIN64))
-#include <x86intrin.h>
-#else
 #include <intrin.h>
-#endif
 
 #define M_PI_X_2  (M_PI * 2.0)
 
 //#define REITING
 
 //--------------------------------------------------------------------------------------------------
-oqpsk_demodulator::oqpsk_demodulator()
+rx_ieee802_15_4::rx_ieee802_15_4()
 {
     preamble_correlation_buffer = new std::complex<float>[LEN_PREAMBLE];
     sfd_correlation_buffer = new std::complex<float>[5];
     sfd_synchronize_buffer = new std::complex<float>[LEN_SFD];
-    constelation_buffer = new std::complex<float>[MAX_SAMPLES_PAYLOAD];
+    constelation_buffer = new std::complex<float>[MAX_BITS_PACKET];
+    idx_const_buf = 0;
 
-    conj_local_sfd = new complex[LEN_CHIP * OVERSAMPLE + SHIFT_IQ / 2];
+    preamble_correlation_fifo.reset();
+
+    conj_local_sfd = new complex[LEN_CHIP * OVERSAMPLE + OVERSAMPLE];
     local_real = new float[16 * LEN_CHIP];
     local_imag = new float[16 * LEN_CHIP];
 
-    v1_symbols = new uint8_t[MAX_SYMBOLS_PAYLOAD];
-    v2_symbols = new uint8_t[MAX_SYMBOLS_PAYLOAD];
+    mac_data = new mac_sublayer_data;
+    mac_layer = new rx_mac_sublayer;
 
     init_local();
-
-    reset_demodulator();
-
-
 }
 //--------------------------------------------------------------------------------------------------
-oqpsk_demodulator::~oqpsk_demodulator()
+rx_ieee802_15_4::~rx_ieee802_15_4()
 {
-    fprintf(stderr, "oqpsk_demodulator::~oqpsk_demodulator() start\n");
+    qDebug() << "ieee802_15_4::~ieee802_15_4() start";
     stop();
+    delete mac_data;
+    delete mac_layer;
     delete[] preamble_correlation_buffer;
     delete[] sfd_correlation_buffer;
     delete[] sfd_synchronize_buffer;
@@ -59,12 +56,10 @@ oqpsk_demodulator::~oqpsk_demodulator()
     delete[] conj_local_sfd;
     delete[] local_real;
     delete[] local_imag;
-    delete[] v1_symbols;
-    delete[] v2_symbols;
-    fprintf(stderr, "oqpsk_demodulator::~oqpsk_demodulator() stop\n");
+    qDebug() << "ieee802_15_4::~ieee802_15_4() stop";
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::init_local()
+void rx_ieee802_15_4::init_local()
 {       
     for(int i = 0; i < 16; ++i){
         for(int j = 0; j < 16; ++j){
@@ -97,75 +92,70 @@ void oqpsk_demodulator::init_local()
     }
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::start(rx_thread_data_t *rx_thread_data_, rx_sap_t *rx_sap_)
+void rx_ieee802_15_4::start(rx_thread_data_t *rx_thread_data_)
 {
     stop();
     is_started = true;
-    swap_v_psdu = false;
+    swap_mpdu = false;
+    mac_data->reset();
+    mac_layer_thread = new std::thread(&rx_mac_sublayer::start, mac_layer, mac_data);
+    mac_layer_thread->detach();
 
-    work(rx_thread_data_, rx_sap_);
+    work(rx_thread_data_);
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::stop()
+void rx_ieee802_15_4::stop()
 {
-    reset_demodulator();
+    reset_detection();
     if(is_started){
+        mac_data->stop = true;
+        mac_data->cond_value.notify_one();
+        while(mac_data->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        delete mac_layer_thread;
         is_started = false;
     }
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::work(rx_thread_data_t *rx_thread_data_, rx_sap_t *rx_sap_)
+void rx_ieee802_15_4::work(rx_thread_data_t *rx_thread_data_)
 {
     rx_thread_data_t *rx_thread_data = rx_thread_data_;
     std::unique_lock<std::mutex> read_lock(rx_thread_data->mutex);
-    while (!rx_thread_data->stop_demodulator){
-        rx_thread_data->condition_value.wait(read_lock);
+    while (!rx_thread_data->stop){
+        rx_thread_data->cond_value.wait(read_lock);
         if(rx_thread_data->ready){
-
-            if(rx_thread_data->mode == rx_mode_data){
-                demodulator(rx_thread_data->channel,
-                            rx_thread_data->len_buffer, rx_thread_data->ptr_buffer,
-                            rx_sap_);
-            }
-            else if(rx_thread_data->mode == rx_mode_rssi){
-                if(!rx_sap_->ready_rssi){
-                    rx_sap_->ready_rssi = true;
-                    rx_sap_->mode = rx_mode_rssi;
-                    rx_sap_->rssi = rx_thread_data->rssi;
-
-                    callback_phy->callback_demodulator_rssi();
-
-                }
-            }
-            rx_thread_data->set_mode = rx_sap_->set_mode;
-
             rx_thread_data->ready = false;
+            rx_data(rx_thread_data->len_buffer, rx_thread_data->ptr_buffer);
         }
-
     }
     stop();
-    callback_device->error_callback(rx_thread_data->status);
-    fprintf(stderr, "oqpsk_demodulator::work finish\n");
+    callback->error_callback(rx_thread_data->status);
+    fprintf(stderr, "rx_ieee802_15_4::work() finish\n");
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::demodulator(int &channel_, int in_len_, std::complex<float> *iq_data_,
-                                    rx_sap_t *rx_sap_)
+void rx_ieee802_15_4::rx_data(int len_, int16_t *i_buffer_)
 {
-//    fprintf(stderr, "ed %f\n", energy_detect_);
-
+//    fprintf(stderr, "rx_ieee802_15_4::rx_data 0\n");
+    detection(len_, i_buffer_);
+//    fprintf(stderr, "rx_ieee802_15_4::rx_data 1\n");
+}
+//--------------------------------------------------------------------------------------------------
+void rx_ieee802_15_4::detection(int &in_len_, int16_t *iq_data_)
+{
     int in_len = in_len_;
-    std::complex<float> *iq_data = iq_data_;
-    float energy_signal;
+    int16_t *iq_data = iq_data_;
+    complex data;
     complex *data_delay_seg;
     complex out_double_correlator;
-    double level;
+    float level;
     float angle_local_correlation;
-    uint8_t *p_symbols;
-    if(swap_v_psdu){
-        p_symbols = v2_symbols;
+    std::vector<uint8_t> *p_mpdu;
+    if(swap_mpdu){
+        p_mpdu = &v2_mpdu;
     }
     else{
-        p_symbols = v1_symbols;
+        p_mpdu = &v1_mpdu;
     }
 #ifdef REITING
 auto start_time = std::chrono::steady_clock::now();
@@ -173,33 +163,17 @@ auto start_time = std::chrono::steady_clock::now();
 
     for(int i = 0; i < in_len; ++i){
 
-        complex data = iq_data[i];
-//            energy_detect = avg_level(norm(data));
+        data.real(iq_data[i * 2]);
+        data.imag(iq_data_[i * 2 + 1]);
 
         switch (state){
-
-//        case detect_skip:
-
-//            ++idx_i;
-//            if(idx_i == 10){
-
-//                state = detect_preamble;
-
-//            }
-
-//            break;
 
         case detect_signal:
 
             data_delay_seg = delay_seg_for_double_correlator.buffer(data);
             out_double_correlator = double_correlator(data_delay_seg);
             level = norm(out_double_correlator);
-//            level = /*std::sqrt(*/out_double_correlator.real() * out_double_correlator.real() +
-//                              out_double_correlator.imag() + out_double_correlator.imag()/*)*/;
-
-            energy_signal = avg_level(level);
-
-            level_thr =  energy_signal / 7.5f;//7.5 selected from experience
+            level_thr =  k_tr * avg_level(norm(data));
             if(level > level_thr){
                 delay_chip.data(data);
                 max_level = level;
@@ -219,8 +193,6 @@ auto start_time = std::chrono::steady_clock::now();
                     sum_cross_correlation = {0.0f, 0.0f};
 
                     state = detect_preamble;
-
-//                    fprintf(stderr, "ed %f  %f  %f\n", level_thr, energy_detect, energy_detect_2);
 
                 }
             }
@@ -245,38 +217,27 @@ auto start_time = std::chrono::steady_clock::now();
                 if(idx_i == LEN_CHIP || idx_i == (LEN_CHIP - 1) || idx_i == (LEN_CHIP + 1)){
                     idx_i = 0;
                     ++idx_preamble;
-//                    fprintf(stderr, "++idx_preamble %d\n", idx_preamble);
                     sum_double_correlation += max_double_correlation;
                     sum_cross_correlation += cross_correlation;
                     cross_correlation = {0.0f, 0.0f};
                     if(idx_preamble == 8){
                         idx_preamble = 0;
 
-                        rx_sap_->is_signal = true;
-
                         state = frequency_offset_estimation;
-
-//                        fprintf(stderr, "frequency_offset_estimation \n");
 
                         break;
 
                     }
-//                    else{
-
-//                        state = detect_skip;
-
-//                    }
-//                    fprintf(stderr, "ed %f  %f  %f\n", level_thr, energy_detect, energy_detect_2);
                 }
                 else{
-                    reset_demodulator();
+                    reset_detection();
 
                     break;
 
                 }
             }
             if(idx_i > (LEN_CHIP + 1)){
-                reset_demodulator();
+                reset_detection();
 
                 break;
 
@@ -314,23 +275,19 @@ auto start_time = std::chrono::steady_clock::now();
             }
             fq_offset = coarse_fq_offset + fine_fq_offset;
             idx_margin = LEN_CHIP - len_segment * num_segment - 1;
+            idx_sfd_sync_buf = 0;
 
-            state = remove_margin;
-
-            break;
-
-        case remove_margin:
-
-            if(--idx_margin == 1) {
-
-                state = frame_delimiter_phase_synchronisation;
-
-            }
+            state = frame_delimiter_phase_synchronisation;
 
             break;
 
         case frame_delimiter_phase_synchronisation:
 
+            if(--idx_margin > 0) {
+
+                break;
+
+            }
             phase_nco += fq_offset;
             nco_derotate = {cosf(phase_nco), sinf(phase_nco)};
             data *= conj(nco_derotate);
@@ -354,15 +311,15 @@ auto start_time = std::chrono::steady_clock::now();
 
                 state = frame_delimiter_timing_synchronisation;
 
-//                complex *ptr_preamble_correlation = preamble_correlation_fifo.buffer();
-//                for(int i = 0; i < LEN_PREAMBLE; ++i){
-//                    preamble_correlation_buffer[i] = ptr_preamble_correlation[i];
-//                }
-                callback_device->preamble_correlation_callback(LEN_PREAMBLE, preamble_correlation_fifo.buffer());
-
+                complex *ptr_preamble_correlation = preamble_correlation_fifo.buffer();
+                for(int i = 0; i < LEN_PREAMBLE; ++i){
+                    preamble_correlation_buffer[i] = ptr_preamble_correlation[i];
+                }
+                callback->preamble_correlation_callback(LEN_PREAMBLE, preamble_correlation_buffer);
+                preamble_correlation_fifo.reset();
 
             }
-            plot_data = {data.real(), conj_local_sfd[idx_i].real()};
+            plot_data = {data.real(), conj_local_sfd[idx_i].real() * 500};
             sfd_synchronize_buffer[idx_sfd_sync_buf++] = plot_data;
             ++idx_i;
 
@@ -378,7 +335,7 @@ auto start_time = std::chrono::steady_clock::now();
                 sfd_correlation[1] += data * conj_local_sfd[idx_i + 1];
                 sfd_correlation[2] += data * conj_local_sfd[idx_i + 3];
                 sfd_correlation[3] += data * conj_local_sfd[idx_i + 5];
-                plot_data = {data.real(), conj_local_sfd[idx_i].real()};
+                plot_data = {data.real(), conj_local_sfd[idx_i].real() * 500};
                 sfd_synchronize_buffer[idx_sfd_sync_buf++] = plot_data;
             }
             else if(idx_i == (LEN_CHIP * 2 - 5)){
@@ -389,20 +346,19 @@ auto start_time = std::chrono::steady_clock::now();
                     sfd_correlation_buffer[i + 1] = {cor_z[i], 0.0f};
                 }
                 mu = atan2f(cor_z[0] - cor_z[2], cor_z[1] - cor_z[3]) *  2.0f / M_PI_2;
-                plot_data = {data.real(), conj_local_sfd[idx_i].real()};
+                plot_data = {data.real(), conj_local_sfd[idx_i].real() * 500};
                 sfd_synchronize_buffer[idx_sfd_sync_buf++] = plot_data;
             }
             else if(idx_i < (LEN_CHIP * 2)){
-                plot_data = {data.real(), conj_local_sfd[idx_i].real()};
+                plot_data = {data.real(), conj_local_sfd[idx_i].real() * 500};
                 sfd_synchronize_buffer[idx_sfd_sync_buf++] = plot_data;
-                interpolator_preset(data);
             }
             else if(idx_i < (LEN_CHIP * 2 + 1)){
-                interpolator_preset(data);
+                data = interpolator(data, mu);
             }
             else{
                 idx_i = 0;
-                interpolator_preset(data);
+                data = interpolator(data, mu);
                 // clear
                 for(int symbol = 0; symbol < 16; ++symbol){
                     i_correlation[symbol] = 0;
@@ -412,7 +368,7 @@ auto start_time = std::chrono::steady_clock::now();
 
                 state = frame_lenght;
 
-                callback_device->sfd_callback(5, sfd_correlation_buffer, LEN_SFD, sfd_synchronize_buffer);
+                callback->sfd_callback(5, sfd_correlation_buffer, LEN_SFD, sfd_synchronize_buffer);
 
                 break;
 
@@ -428,10 +384,10 @@ auto start_time = std::chrono::steady_clock::now();
             data *= conj(nco_derotate);
             data = interpolator(data, mu);
             for(int symbol = 0; symbol < 16; ++symbol){
-                const int idx_local = symbol * LEN_CHIP + idx_chip;
-                i_correlation[symbol] += data.real() * local_real[idx_local];
-                q_correlation[symbol] += data.imag() * local_imag[idx_local];
-                imag_sum[symbol] += data.imag() * local_real[idx_local] - data.real() * local_imag[idx_local];
+                i_correlation[symbol] += data.real() * local_real[symbol * LEN_CHIP + idx_chip];
+                q_correlation[symbol] += data.imag() * local_imag[symbol * LEN_CHIP + idx_chip];
+                imag_sum[symbol] += data.imag() * local_real[symbol * LEN_CHIP + idx_chip] -
+                                    data.real() * local_imag[symbol * LEN_CHIP + idx_chip];
             }
             if(++idx_chip < LEN_CHIP){
 
@@ -462,32 +418,19 @@ auto start_time = std::chrono::steady_clock::now();
                 imag_sum[symbol] = 0;
             }
             angle_offset += angle_local_correlation;
-            // need two symbols for octet
-            if(++idx_symbol_frame_lenght == 2){
+            // need two symbol for m_byte
+            if(++idx_symbol == 2){
+                idx_symbol = 0;
                 symbol_detected &= 0x7;
                 symbol_detected <<= 0x4;
                 fq_offset += (angle_local_correlation - pre_angle_local_correlation);
                 idx_const_buf = 0;
-                idx_payload = 0;
 
                 state = payload;
 
             }
             pre_angle_local_correlation = angle_local_correlation;
-            len_symbols += symbol_detected;
-            // check frame lenght
-            if(state == payload){
-                if(len_symbols > MaxPHYPacketSize * 2 || len_symbols < 5){
-                    fprintf(stderr, "oqpsk_demodulator::demodulator out len_symbols %d\n", len_symbols);
-
-                    rx_sap_->is_signal = false;
-                    reset_demodulator();
-
-                }
-                else{
-                    len_symbols *= 2;
-                }
-            }
+            len_psdu += symbol_detected;
 
             break;
 
@@ -498,10 +441,10 @@ auto start_time = std::chrono::steady_clock::now();
             data *= conj(nco_derotate);
             data = interpolator(data, mu);
             for(int symbol = 0; symbol < 16; ++symbol){
-                const int idx_local = symbol * LEN_CHIP + idx_chip;
-                i_correlation[symbol] += data.real() * local_real[idx_local];
-                q_correlation[symbol] += data.imag() * local_imag[idx_local];
-                imag_sum[symbol] += data.imag() * local_real[idx_local] - data.real() * local_imag[idx_local];
+                i_correlation[symbol] += data.real() * local_real[symbol * LEN_CHIP + idx_chip];
+                q_correlation[symbol] += data.imag() * local_imag[symbol * LEN_CHIP + idx_chip];
+                imag_sum[symbol] += data.imag() * local_real[symbol * LEN_CHIP + idx_chip] -
+                                    data.real() * local_imag[symbol * LEN_CHIP + idx_chip];
             }
             //show_constelation__
             if((idx_i + 2) % 4 == 0){
@@ -528,17 +471,7 @@ auto start_time = std::chrono::steady_clock::now();
             if(q_correlation[symbol_detected] < 0.0f){
                symbol_detected += 8;
             }
-
-//            p_symbols->push_back(symbol_detected);
-            p_symbols[idx_payload++] = symbol_detected;
-
-//            if(idx_payload == MaxPHYPacketSize * 2){
-
-//                fprintf(stderr, "idx_payload == MaxPHYPacketSize !!!!!!!!!\n");
-
-//                reset_demodulator();
-//            }
-
+            p_mpdu->push_back(symbol_detected);
             angle_local_correlation = atan2f(imag_sum[symbol_detected],
                                              i_correlation[symbol_detected] +
                                              q_correlation[symbol_detected]) / LEN_CHIP;
@@ -552,32 +485,38 @@ auto start_time = std::chrono::steady_clock::now();
             fq_offset += angle_local_correlation - pre_angle_local_correlation;
             pre_angle_local_correlation = angle_local_correlation;
 
-            if(idx_payload == len_symbols) {
-                rx_sap_->is_signal = false;
-//                if(!rx_sap_->ready){
-                    rx_sap_->ready = true;
-                    rx_sap_->channel = channel_;
-                    rx_sap_->mode = rx_mode_data;
-                    rx_sap_->len_symbols = len_symbols;
-                    rx_sap_->symbols =  p_symbols;
+            if(idx_i == (len_psdu * LEN_CHIP * 2)){
 
-                    callback_phy->callback_demodulator_rx();
-
-                    swap_v_psdu = !swap_v_psdu;
-                    if(swap_v_psdu){
-                        p_symbols = v2_symbols;
+                if (mac_data->mutex.try_lock()){
+                    mac_data->mpdu =  p_mpdu;
+                    mac_data->ready = true;
+                    mac_data->mutex.unlock();
+                    mac_data->cond_value.notify_one();
+                    if(swap_mpdu){
+                        v1_mpdu.clear();
                     }
                     else{
-                        p_symbols = v1_symbols;
+                        v2_mpdu.clear();
                     }
-//                }
-//                else{
-//                    fprintf(stderr, "demodulator : skip buffer\n");
-//                }
+                    swap_mpdu = !swap_mpdu;
+                }
+                else{
+                    fprintf(stderr, " mac_data : skip buffer\n");
+                }
 
-                callback_device->constelation_callback(idx_const_buf, constelation_buffer);
+                callback->constelation_callback(idx_const_buf, constelation_buffer);
 
-                reset_demodulator();
+//                qDebug() << "idx_i=" << idx_i
+//                         << "len_psdu="
+//                         << len_psdu << "reset------------------";
+                reset_detection();
+
+            }
+            else if(idx_i > MAX_BITS_PACKET){
+//                qDebug() << "idx_i > MAX_BITS_PACKET" << idx_i
+//                         << "len_psdu="
+//                         << len_psdu << "------------------error!";
+                reset_detection();
             }
 
             break;
@@ -596,10 +535,8 @@ if(elapsed_time > 1024){
 
 }
 //--------------------------------------------------------------------------------------------------
-complex oqpsk_demodulator::double_correlator(const complex *chip_)
+complex rx_ieee802_15_4::double_correlator(const complex *chip_)
 {
-    float seg_real[num_segment];
-    float seg_imag[num_segment];
     for(int j = 0; j < num_segment; ++j){
         int n = j * len_segment;
         seg_real[j] = 0.0f;
@@ -621,14 +558,7 @@ complex oqpsk_demodulator::double_correlator(const complex *chip_)
 
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::interpolator_preset(const complex &data_)
-{
-    delay_data_3 = delay_data_2;
-    delay_data_2 = delay_data_1;
-    delay_data_1 = data_;
-}
-//--------------------------------------------------------------------------------------------------
-complex oqpsk_demodulator::interpolator(const complex &data_, const float &mu_)
+complex rx_ieee802_15_4::interpolator(const complex &data_, const float &mu_)
 {
     // 4-point, 3rd-order Hermite (x-form)
     delay_data_3 = delay_data_2;
@@ -650,7 +580,7 @@ complex oqpsk_demodulator::interpolator(const complex &data_, const float &mu_)
 
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::reset_demodulator()
+void rx_ieee802_15_4::reset_detection()
 {
     delay_seg_for_double_correlator.reset();
     sum_double_correlation = {0.0f, 0.0f};
@@ -667,13 +597,61 @@ void oqpsk_demodulator::reset_demodulator()
     x1 = 0.0f;
     mu = 0.0f;
 
-    idx_sfd_sync_buf = 0;
-    len_symbols = 0;
-    idx_symbol_frame_lenght = 0;
+    len_psdu = 0;
     state_type = frame_lenght;
     state = detect_signal;
-
-    preamble_correlation_fifo.reset();
 }
 //--------------------------------------------------------------------------------------------------
+void rx_ieee802_15_4::half_sine_matched_filter(int len_, int16_t *i_buffer_, int16_t *q_buffer_)
+{
+    if(iq_buffer.size() != (ulong)len_){
+        iq_buffer.resize(len_);
+        iq_data.resize(len_);
+    }
+    for(int i = 0; i < len_; ++i){
+        float v1 = i_buffer_[i * 2];
+        float v2 = i_buffer_[i * 2 + 1];
+        iq_buffer[i].real(v1);
+        iq_buffer[i].imag(v2);
 
+    }
+
+    complex sum0, sum1, sum2, sum3;
+
+    sum0 = h_matched_filter[0] * buff_matched_filter[0];
+    sum1 = h_matched_filter[1] * buff_matched_filter[1];
+    sum2 = h_matched_filter[2] * buff_matched_filter[2];
+    sum3 = h_matched_filter[3] * iq_buffer[0];
+    iq_data[0] = sum0 + sum1 + sum2 + sum3;
+
+    sum0 = h_matched_filter[0] * buff_matched_filter[1];
+    sum1 = h_matched_filter[1] * buff_matched_filter[2];
+    sum2 = h_matched_filter[2] * iq_buffer[0];
+    sum3 = h_matched_filter[3] * iq_buffer[1];
+    iq_data[1] = sum0 + sum1 + sum2 + sum3;
+
+    sum0 = h_matched_filter[0] * buff_matched_filter[2];
+    sum1 = h_matched_filter[1] * iq_buffer[0];
+    sum2 = h_matched_filter[2] * iq_buffer[1];
+    sum3 = h_matched_filter[3] * iq_buffer[2];
+    iq_data[2] = sum0 + sum1 + sum2 + sum3;
+
+    for(int i = 0; i < len_ - 3; ++i){
+        sum0 = h_matched_filter[0] * iq_buffer[i];
+        sum1 = h_matched_filter[1] * iq_buffer[i + 1];
+        sum2 = h_matched_filter[2] * iq_buffer[i + 2];
+        sum3 = h_matched_filter[3] * iq_buffer[i + 3];
+
+        iq_data[i + 3] = sum0 + sum1 + sum2 + sum3;
+    }
+
+    buff_matched_filter[0] = iq_buffer[len_ - 3];
+    buff_matched_filter[1] = iq_buffer[len_ - 2];
+    buff_matched_filter[2] = iq_buffer[len_ - 1];
+}
+//--------------------------------------------------------------------------------------------------
+void rx_ieee802_15_4::tx_ptr_data(int16_t* ptr_, int len_)
+{
+
+}
+//--------------------------------------------------------------------------------------------------

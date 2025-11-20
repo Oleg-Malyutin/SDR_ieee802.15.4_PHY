@@ -837,6 +837,7 @@
       <string>Open device</string>
      </property>
     </widget>
+    <addaction name="separator"/>
     <addaction name="menuOpen_device"/>
     <addaction name="actionAdvanced_device_settings"/>
     <addaction name="actionExit"/>
