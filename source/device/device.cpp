@@ -18,15 +18,42 @@
 
 #include "utils/zep.h"
 
+#include "adalm_pluto/pluto_sdr.h"
+#include "limesdr_mini/lime_sdr.h"
+#include "hackrf_one/hackrf_one.h"
+
+std::string pluto_name = "PlutoSDR";
+#ifdef USE_PLUTOSDR
+sdr_device_new<pluto_sdr> pluto_sdr::add_sdr_device(pluto_name);
+#endif
+
+std::string lime_name = "LimeSDR";
+#ifdef USE_LIMESDR
+sdr_device_new<lime_sdr> lime_sdr::add_sdr_device(lime_name);
+#endif
+
+std::string hackrf_name = "HackRF";
+#ifdef USE_HACKRF
+sdr_device_new<hackrf_one> hackrf_one::add_sdr_device(hackrf_name);
+#endif
+
 //-----------------------------------------------------------------------------------------
 device::device(QObject *parent) : QObject(parent)
 {
-    type_dev = NONE;
 
-    pluto = new pluto_sdr;
-
-    timer = new QTimer(this);
-    connect(timer, &QTimer::timeout, this, &device::search_devices);
+}
+//-----------------------------------------------------------------------------------------
+device::~device()
+{
+    qDebug() << "device::~device() start";
+    stop();
+    qDebug() << "device::~device() stop";
+}
+//-----------------------------------------------------------------------------------------
+void device::start()
+{
+    timer = new QTimer();
+    connect(timer, &QTimer::timeout, this, &device::scan_usb_device);
     timer->start(1000);
 
     rx_thread_data = new rx_thread_data_t;
@@ -38,107 +65,161 @@ device::device(QObject *parent) : QObject(parent)
     phy->demodulator->connect_device(this);
     phy->modulator->connect_device(this);
 
-    tx_socket = new QUdpSocket;
+    tx_socket = new QUdpSocket();
 
     data = new std::complex<float>[LEN_MAX_SAMPLES * 2];
 }
 //-----------------------------------------------------------------------------------------
-device::~device()
+void device::stop()
 {
-    qDebug() << "device::~device() start";
-
-    disconnect(timer, &QTimer::timeout, this, &device::search_devices);
-    stop();
-    delete timer;
-    delete pluto;
-    delete rx_thread_data;
-    delete phy;
-
-    delete tx_socket;
-
-    delete[] data;
-
-    qDebug() << "device::~device() stop";
+    if(is_started){
+        is_started = false;
+        disconnect(timer, &QTimer::timeout, this, &device::scan_usb_device);
+        close_device();
+        delete timer;
+        delete sdr;
+        delete rx_thread_data;
+        delete phy;
+        delete tx_socket;
+        delete[] data;
+    }
 }
 //-----------------------------------------------------------------------------------------
-void device::search_devices()
+void device::scan_usb_device()
 {
-    if(!pluto_is_open) {
-        if(pluto->open_device(pluto_sdr::USB, pluto_name)/* || pluto->get_device(pluto_sdr::IP)*/){     
-            pluto->set_rx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
-            pluto->set_rx_sampling_frequency(ieee802_15_4_info::samplerate);
-            pluto->set_rx_frequency(ieee802_15_4_info::rf_frequency);
-            pluto->set_rx_hardwaregain(69);
-            pluto->set_tx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
-            pluto->set_tx_sampling_frequency(ieee802_15_4_info::samplerate);
-            pluto->set_tx_frequency(ieee802_15_4_info::rf_frequency);
-            pluto->set_tx_hardwaregain(PLUTO_TX_GAIN_MAX);
-
-            emit device_found(pluto_name);
-
-            pluto_is_open = true;
-        }
-    }
-    else if(pluto_is_open || !pluto_is_start){
-        if(!pluto->check_connect()){
-            pluto->close_device();
-            pluto_is_open = false;
-
-            emit remove_device(pluto_name);
-
-        }
-    }
-
-}
-//-----------------------------------------------------------------------------------------
-void device::start(QString name_)
-{
-    stop();
-    if(name_ == pluto_name){
-        timer->stop();
-        type_dev = PLUTO;
-        phy->modulator->connect_tx(pluto->dev_tx);
-        pluto->start(rx_thread_data);
-        min_rssi = -126.0;
-        pluto_is_start = true;
-    }
-    else{
+    libusb_device **devs;
+    int r = libusb_init(NULL);
+    if(r < 0) {
+        fprintf(stderr, "scan_usb_device: failed libusb_init");
 
         return;
 
     }
+    ssize_t cnt = libusb_get_device_list(NULL, &devs);
+    if(cnt < 0) {
+        libusb_exit(NULL);
+        fprintf(stderr, "scan_usb_device: failed libusb_get_device_list");
+
+        return;
+
+    }
+    libusb_device *dev;
+    int i = 0;
+    while((dev = devs[i++]) != NULL) {
+        struct libusb_device_descriptor desc;
+        int r = libusb_get_device_descriptor(dev, &desc);
+        if(r < 0) {
+            fprintf(stderr, "scan_usb_device: failed libusb_get_device_descriptor");
+
+            continue;
+
+        }
+        if(desc.idVendor == 0x0456 &&  desc.idProduct == 0xb673){
+#ifdef USE_PLUTOSDR
+             emit device_found(QString::fromStdString(pluto_name));
+#endif
+        }
+        if(desc.idVendor == 0x0403 &&  desc.idProduct == 0x601f){
+#ifdef USE_LIMESDR
+            emit device_found(QString::fromStdString(lime_name));
+#endif
+        }
+        if(desc.idVendor == 0x1d50 &&  desc.idProduct == 0x6089){
+#ifdef USE_HACKRF
+            emit device_found(QString::fromStdString(hackrf_name));
+#endif
+        }
+
+    }
+    libusb_free_device_list(devs, 1);
+    libusb_exit(NULL);
+}
+//-----------------------------------------------------------------------------------------
+void device::open_device(QString name_)
+{
+    close_device();
+    while (timer->isActive()){
+        timer->stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    std::string name = name_.toStdString();
+    std::string err;
+    if(name == pluto_name){
+        sdr_name = pluto_name;
+    }
+    else if(name == lime_name){
+        sdr_name = lime_name;
+    }
+    else if(name == hackrf_name){
+        sdr_name = hackrf_name;
+    }
+
+    sdr = sdr_factory::instantiate(sdr_name);
+
+    emit device_status(QString::fromStdString(sdr_name) + ": Wait for to load...");
+
+
+    if(sdr->open_device(sdr_name, err)/* || pluto->get_device(pluto_sdr::IP)*/){
+        sdr->set_rx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
+        sdr->set_rx_sampling_frequency(ieee802_15_4_info::samplerate);
+        sdr->set_rx_frequency(ieee802_15_4_info::rf_frequency);
+        sdr->set_rx_hardwaregain(69);
+        sdr->set_tx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
+        sdr->set_tx_sampling_frequency(ieee802_15_4_info::samplerate);
+        sdr->set_tx_frequency(ieee802_15_4_info::rf_frequency);
+        sdr->set_tx_hardwaregain(PLUTO_TX_GAIN_MAX);
+        sdr_is_open = true;
+
+        emit device_open();
+
+    }
+    else{
+        sdr->close_device();
+        timer->start(1000);
+
+        emit device_status(QString::fromStdString(name + err));
+
+    }
+}
+//-----------------------------------------------------------------------------------------
+void device::close_device()
+{
+    device_stop();
+    if(sdr_is_open){
+        sdr_is_open = false;
+        if(!sdr->check_connect()){
+
+            emit remove_device(QString::fromStdString(sdr_name));
+
+        }
+        sdr->close_device();qDebug() << "close_device";
+    }
+}
+//-----------------------------------------------------------------------------------------
+void device::device_start()
+{
+    device_stop();
+
+    while (timer->isActive()){
+        timer->stop();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    phy->modulator->connect_tx((rf_tx_callback*)sdr->get_dev_tx());
+    sdr->start(rx_thread_data);
+    double min_rssi;
+    sdr->get_min_rssi(min_rssi);
+    sdr_is_start = true;
     // TODO : protocol start;
     phy_thread = new std::thread(&phy_layer::start, phy, rx_thread_data, min_rssi);
     phy_thread->detach();
 }
 //-----------------------------------------------------------------------------------------
-void device::stop()
+void device::device_stop()
 {
-    while (timer->isActive()){
-        timer->stop();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if(sdr_is_start){
+        sdr_is_start = false;
+        sdr->stop();
     }
-    switch (type_dev) {
-    case PLUTO:
-        if(pluto_is_start){
-            pluto_is_start = false;
-            pluto->stop();
-        }
-        if(pluto_is_open){
-            pluto_is_open = false;
-            if(!pluto->check_connect()){
-
-                emit remove_device(pluto_name);
-
-            }
-            pluto->close_device();
-        }
-        break;
-    case NONE:
-        break;
-    }
-    type_dev = NONE;
-
     if(phy->is_started){
         callback_phy->callback_stop_phy_layer();
         while(phy->is_started){
@@ -152,55 +233,46 @@ void device::stop()
 //-----------------------------------------------------------------------------------------
 void device::advanced_settings_dialog()
 {
-    switch (type_dev) {
-    case PLUTO:
-        pluto->advanced_settings_dialog();
-        break;
-    case NONE:
-        break;
-    }
+    sdr->advanced_settings_dialog();
 }
 //-----------------------------------------------------------------------------------------
 int device::set_rx_frequency(int channel_)
 {
+    if(sdr == nullptr){
+
+        return 0;
+
+    }
     channel = channel_;
     rx_thread_data->channel = channel_;
     uint64_t rx_frequency = ieee802_15_4_info::fq_channel_mhz[channel] * 1e6;
     int error = 0;
-    switch (type_dev) {
-    case PLUTO:
-        error = pluto->set_rx_frequency(rx_frequency);
-        error = pluto->set_tx_frequency(rx_frequency);
-        break;
-    case NONE:
-        break;
-    }
+    sdr->set_rx_frequency(rx_frequency);
+    sdr->set_tx_frequency(rx_frequency);
 
     return error;
 }
 //-----------------------------------------------------------------------------------------
 void device::set_rx_hardwaregain(double rx_hardwaregain_)
 {
-    switch (type_dev) {
-    case PLUTO:
-        pluto->set_rx_hardwaregain(rx_hardwaregain_);
-        break;
-    case NONE:
-        break;
+    if(sdr == nullptr){
+
+        return;
+
     }
+    sdr->set_rx_hardwaregain(rx_hardwaregain_);
 }
 //-----------------------------------------------------------------------------------------
 int device::set_tx_frequency(int channel_)
 {
+    if(sdr == nullptr){
+
+        return 0;
+
+    }
     uint64_t tx_frequency = ieee802_15_4_info::fq_channel_mhz[channel_] * 1e6;
     int error = 0;
-    switch (type_dev) {
-    case PLUTO:
-        error = pluto->set_tx_frequency(tx_frequency);
-        break;
-    case NONE:
-        break;
-    }
+    sdr->set_tx_frequency(tx_frequency);
 
     return error;
 }
@@ -221,7 +293,7 @@ void device::error_callback(enum_device_status status_)
 
     qDebug() << "error_callback" << status_;
 
-    emit device_status();
+    emit device_error_status();
 }
 //-----------------------------------------------------------------------------------------
 void device::preamble_correlation_callback(int len_, std::complex<float> *b_)

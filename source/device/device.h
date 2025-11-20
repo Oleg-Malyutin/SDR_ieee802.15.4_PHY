@@ -20,7 +20,7 @@
 
 #include <stdint.h>
 
-#include "adalm_pluto/pluto_sdr.h"
+#include "device_type.h"
 #include "ieee802_15_4/phy_layer/phy_layer.h"
 #include "callback_device.h"
 
@@ -37,8 +37,12 @@ public:
     phy_layer *phy;
 
 public slots:
-    void start(QString name_);
+    void start();
     void stop();
+    void open_device(QString name_);
+    void close_device();
+    void device_start();
+    void device_stop();
     void advanced_settings_dialog();
     int set_rx_frequency(int channel_);
     void set_rx_hardwaregain(double rx_hardwaregain_);
@@ -47,9 +51,10 @@ public slots:
     void test_test();
 
 signals:
+    void device_status(QString status_);
     void device_found(QString name_);
     void remove_device(QString name_);
-    void error_open_device(QString name_);
+    void device_open();
 
     void plot_preamble_correlaion(int len_plot_, std::complex<float>* plot_buffer_);
     void plot_sfd_correlation(int len_plot_, std::complex<float>* plot_buffer_);
@@ -61,25 +66,20 @@ signals:
 
     void plot_test(int len_, std::complex<float>* data_);
 
-    void device_status();
+    void device_error_status();
 
 private:
     bool is_started = false;
     int channel;
     rx_thread_data_t *rx_thread_data;
-    enum {
-        PLUTO,
-        NONE
-    }type_dev;
+
     QTimer *timer;
-    void search_devices();
+    void scan_usb_device();
 
-    pluto_sdr *pluto = nullptr;
-    QString pluto_name;
-    bool pluto_is_open = false;
-    bool pluto_is_start = false;
-
-    double min_rssi;
+    std::string sdr_name;
+    sdr_device *sdr = nullptr;
+    bool sdr_is_open = false;
+    bool sdr_is_start = false;
 
     std::thread *phy_thread;
     uint32_t channel_mask;
