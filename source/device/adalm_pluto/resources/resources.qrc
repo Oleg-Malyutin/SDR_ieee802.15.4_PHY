@@ -1,0 +1,7 @@
+<RCC>
+    <qresource prefix="/">
+        <file>sdr_usb_gadget</file>
+        <file>S24udc</file>
+        <file>runme.sh</file>
+    </qresource>
+</RCC>

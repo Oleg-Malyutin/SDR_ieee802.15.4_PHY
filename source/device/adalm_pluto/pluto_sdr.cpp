@@ -15,6 +15,10 @@
 #include "pluto_sdr.h"
 #include "ui_pluto_sdr.h"
 
+// #include <ad9361.h>
+
+#include <QThread>
+
 #include <QDebug>
 
 //--------------------------------------------------------------------------------------------------
@@ -24,6 +28,7 @@ pluto_sdr::pluto_sdr(QWidget *parent) :
 {
     ui->setupUi(this);
 
+    usb_direct = new sdrusbgadget;
     dev_rx = new pluto_sdr_rx;
     dev_tx = new pluto_sdr_tx;
 
@@ -55,41 +60,47 @@ pluto_sdr::~pluto_sdr()
     stop();
     delete dev_rx;
     delete dev_tx;
+    delete usb_direct;
     delete config;
     delete ui;
     qDebug() << "pluto_sdr::~pluto_sdr() stop";
 }
 //--------------------------------------------------------------------------------------------------
-//bool pluto_sdr::get_device(enum_uri idx)
-//{
-//    std::string uri;
-//    switch(idx){
-//    case USB:
-//        uri = "usb:";
-//        break;
-//    case IP:
-//        uri = "ip:192.168.3.1";
-//    }
-//    context = iio_create_context_from_uri(uri.c_str());
-
-//    if(context == nullptr) return false;
-
-//    return true;
-//}
-//--------------------------------------------------------------------------------------------------
-bool pluto_sdr::open_device(enum_uri idx, QString &name_)
+void pluto_sdr::show_upload(bool set_show_)
 {
-    std::string uri;
-    switch(idx){
-    case USB:
-        uri = "usb:";
-        break;
-    case IP:
-        uri = "ip:192.168.3.1";
-    }
-    context = iio_create_context_from_uri(uri.c_str());
+    QMessageBox msg;
+//    msg.text("")
+}
+//--------------------------------------------------------------------------------------------------
+bool pluto_sdr::open_device(std::string &name_, std::string &err_)
+{
+    upload_sdrusbgadget *sdrusbgadget = new upload_sdrusbgadget;
+    std::string ip("192.168.2.1");
+    std::string err;
 
-    if(context == nullptr) return false;
+    if(!sdrusbgadget->upload(ip, err)){
+        err_ = "PlutoSDR open failed: " + err;
+
+        return false;
+
+    }
+
+    delete sdrusbgadget;
+
+    int probe = 5;
+    while(probe > 0 && context == nullptr){
+        --probe;
+        QThread::sleep(1);
+//        context = iio_create_context_from_uri("ip:192.168.2.1");
+        context = iio_create_context_from_uri("usb:");
+    }
+
+    if(context == nullptr) {
+        err_ = "PlutoSDR open failed";
+
+        return false;
+
+    }
 
     std::string info;
     for(uint i = 0; i < iio_context_get_attrs_count(context); ++i){
@@ -102,6 +113,9 @@ bool pluto_sdr::open_device(enum_uri idx, QString &name_)
         info.append("\n");
         if(i == 0) name_ = value;
     }
+    ui->label_info->setText(QString::fromStdString(info));
+
+    usb_direct->open(context);
 
     iio_context_set_timeout(context, 0);
 
@@ -110,10 +124,7 @@ bool pluto_sdr::open_device(enum_uri idx, QString &name_)
     tx_lo = iio_device_find_channel(ad9361_phy, "altvoltage1", true);
     rx_channel = iio_device_find_channel(ad9361_phy, "voltage0", false);
     tx_channel = iio_device_find_channel(ad9361_phy, "voltage0", true);
-    cf_ad9361_lpc = iio_context_find_device(context, "cf-ad9361-lpc");
-    cf_ad9361_dds_core_lpc = iio_context_find_device(context, "cf-ad9361-dds-core-lpc");
 
-    ui->label_info->setText(QString::fromStdString(info));
     read_config();
     set_advanced_settings(map_config);
 
@@ -124,19 +135,43 @@ bool pluto_sdr::open_device(enum_uri idx, QString &name_)
     }
     else{
         double d = 128;// us (default 1000)
-//        iio_device_debug_attr_write_double(ad9361_phy, "adi,rssi-duration", d);
+        iio_device_debug_attr_write_double(ad9361_phy, "adi,rssi-duration", d);
         iio_device_debug_attr_read_double(ad9361_phy, "adi,rssi-duration", &d);
         qDebug() << ee << "=" << d;
     }
 
+    // mode fdd or tdd
+//    iio_device_attr_write(ad9361_phy,"ensm_mode","tdd");
 
+    cf_ad9361_lpc = iio_context_find_device(context, "cf-ad9361-lpc");
+    uint b = 2;
+    int e = iio_device_set_kernel_buffers_count(cf_ad9361_lpc, b);
+    fprintf(stderr, "rx iio_device_set_kernel_buffers_count= %d success=%d\n", b, e);
+    /* Disable all channels RX*/
+    uint num_channels_rx = iio_device_get_channels_count(cf_ad9361_lpc);
+    for (uint i = 0; i < num_channels_rx; i++) {
+        iio_channel_disable(iio_device_get_channel(cf_ad9361_lpc, i));
+    }
+
+    cf_ad9361_dds_core_lpc = iio_context_find_device(context, "cf-ad9361-dds-core-lpc");
+    /* Disable all channels TX*/
+    uint num_channels_tx = iio_device_get_channels_count(cf_ad9361_dds_core_lpc);
+    for (uint i = 0; i < num_channels_tx; i++) {
+        iio_channel_disable(iio_device_get_channel(cf_ad9361_dds_core_lpc, i));
+    }
+    iio_channel_enable(iio_device_get_channel(cf_ad9361_dds_core_lpc, 0));
+////    iio_channel_attr_write_longlong(tx_lo, "powerdown", 1);
+
+    err_ = "";
 
     return true;
+
 }
 //--------------------------------------------------------------------------------------------------
-void pluto_sdr::close_device()
+void pluto_sdr:: close_device()
 {
     if(context != nullptr){
+        stop();
         iio_context_destroy(context);
         context = nullptr;
     }
@@ -144,36 +179,47 @@ void pluto_sdr::close_device()
 //--------------------------------------------------------------------------------------------------
 bool pluto_sdr::check_connect()
 {
-    if(iio_context_set_timeout(context, 0) < 0 ) return false;
+    if(iio_context_set_timeout(context, 0) < 0) return false;
     return true;
 }
 //--------------------------------------------------------------------------------------------------
 void pluto_sdr::start(rx_thread_data_t *rx_thread_data_)
 {
+    libusb_device_handle* usb_sdr_dev = usb_direct->usb_sdr_dev;
+    uint8_t usb_sdr_interface_num = usb_direct->usb_sdr_interface_num;
+    uint8_t usb_sdr_ep_in = usb_direct->usb_sdr_ep_in;
+//    uint8_t usb_sdr_ep_out = usb_direct->usb_sdr_ep_out;
     rx_thread_data = rx_thread_data_;
     rx_thread_data->reset();
     rx_thread_data->len_buffer = RX_PLUTO_LEN_BUFFER;
-    thread_rx = new std::thread(&pluto_sdr_rx::start, dev_rx, rx_channel,
-                                cf_ad9361_lpc, rx_thread_data);
-//    thread_rx->detach();
+    thread_rx = new std::thread(&pluto_sdr_rx::start, dev_rx, usb_sdr_dev,
+                                usb_sdr_interface_num, usb_sdr_ep_in, rx_channel, rx_thread_data);
+    thread_rx->detach();
+
+//    thread_tx = new std::thread(&pluto_sdr_tx::start, dev_tx, usb_sdr_dev,
+//                                usb_sdr_interface_num, usb_sdr_ep_out, TX_PLUTO_LEN_BUFFER);
 
     thread_tx = new std::thread(&pluto_sdr_tx::start, dev_tx, tx_lo, cf_ad9361_dds_core_lpc);
-//    thread_tx->detach();
+
+    thread_tx->detach();
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::stop()
 {
     if(dev_rx->is_started){
-        rx_thread_data->stop_rx = true;
-        thread_rx->join();
-//        while(dev_rx->is_started){
-//            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-//        };
+        dev_rx->stop();
+//        thread_rx->join();
+        while(dev_rx->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        };
         delete thread_rx;
     }
     if(dev_tx->is_started){
         dev_tx->stop();
-        thread_tx->join();
+        while(dev_tx->is_started){
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        };
+//        thread_tx->join();
         delete thread_tx;
     }
 }
@@ -196,9 +242,11 @@ void pluto_sdr::set_rx_sampling_frequency(long long int sampling_frequency_hz_)
         char attr[] = "sampling_frequency_available";
         check_range(rx_channel, attr, sampling_frequency_hz_);
     }
+    // unsigned long rate = sf;
+    // ad9361_set_bb_rate(ad9361_phy, rate);
 }
 //-----------------------------------------------------------------------------------------
-int pluto_sdr::set_rx_hardwaregain(double hardwaregain_db_)
+void pluto_sdr::set_rx_hardwaregain(double hardwaregain_db_)
 {
     int ret = iio_channel_attr_write_double(rx_channel, "hardwaregain", hardwaregain_db_);
 //    if(ret < 0){
@@ -207,10 +255,9 @@ int pluto_sdr::set_rx_hardwaregain(double hardwaregain_db_)
 //        check_range(rx_channel, attr, hg);
 //    }
 
-    return ret;
 }
 //-----------------------------------------------------------------------------------------
-int pluto_sdr::set_rx_frequency(long long int frequency_hz_)
+void pluto_sdr::set_rx_frequency(long long int frequency_hz_)
 {
     long long int fq = frequency_hz_;
     int ret = iio_channel_attr_write_longlong(rx_lo, "frequency", fq);
@@ -218,13 +265,11 @@ int pluto_sdr::set_rx_frequency(long long int frequency_hz_)
         char attr[] = "frequency_available";
         check_range(rx_lo, attr, frequency_hz_);
     }
-
-    return ret;
 }
 //-----------------------------------------------------------------------------------------
-void pluto_sdr::get_rx_rssi(double &rssi_db_)
+void pluto_sdr::get_min_rssi(double &rssi_db_)
 {
-    iio_channel_attr_read_double(rx_channel, "rssi", &rssi_db_);
+    rssi_db_ = -126.0;
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::set_tx_rf_bandwidth(long long int bandwidht_hz_)
@@ -247,7 +292,7 @@ void pluto_sdr::set_tx_sampling_frequency(long long int sampling_frequency_hz_)
     }
 }
 //-----------------------------------------------------------------------------------------
-int pluto_sdr::set_tx_hardwaregain(double hardwaregain_db_)
+void pluto_sdr::set_tx_hardwaregain(double hardwaregain_db_)
 {
     int ret = iio_channel_attr_write_double(tx_channel, "hardwaregain", hardwaregain_db_);
     if(ret < 0){
@@ -255,11 +300,9 @@ int pluto_sdr::set_tx_hardwaregain(double hardwaregain_db_)
         int hg = hardwaregain_db_;
         check_range(tx_channel, attr, hg);
     }
-
-    return ret;
 }
 //-----------------------------------------------------------------------------------------
-int pluto_sdr::set_tx_frequency(long long int frequency_hz_)
+void pluto_sdr::set_tx_frequency(long long int frequency_hz_)
 {
     long long int fq = frequency_hz_;
     int ret = iio_channel_attr_write_longlong(tx_lo, "frequency", fq);
@@ -267,8 +310,6 @@ int pluto_sdr::set_tx_frequency(long long int frequency_hz_)
         char attr[] = "frequency_available";
         check_range(tx_lo, attr, frequency_hz_);
     }
-
-    return ret;
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::check_range(iio_channel *ch_, char *attr_, int value_)
@@ -361,7 +402,7 @@ void pluto_sdr::read_config()
 {
     config->beginGroup("PlutoSDR");
     map_config[rx_rf_port_select] = config->value("rx_rf_port_select", "A_BALANCED");
-    map_config[rx_gain_control_mode] = config->value("rx_gain_control_mode", "fast_attack");
+    map_config[rx_gain_control_mode] = config->value("rx_gain_control_mode", "manual");
     map_config[rx_bb_dc_offset_tracking_en] = config->value("rx_bb_dc_offset_tracking_en", true);
     map_config[rx_quadrature_tracking_en] = config->value("rx_quadrature_tracking_en", true);
     map_config[rx_rf_dc_offset_tracking_en] = config->value("rx_rf_dc_offset_tracking_en", true);

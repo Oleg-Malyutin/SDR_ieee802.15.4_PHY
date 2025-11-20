@@ -12,16 +12,17 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-#ifndef PLUTO_SDR_TX_H
-#define PLUTO_SDR_TX_H
+#ifndef PLUTO_SDR_TX_USB_H
+#define PLUTO_SDR_TX_USB_H
 
 #include <iio.h>
 
+#include "tx_usb_plutosdr.h"
 #include "device/device_type.h"
 
-#define TX_PLUTO_LEN_BUFFER 16384
 #define PLUTO_TX_GAIN_MAX 0
-#define PLUTO_SAMPLES_SCALE  32767.9f
+//#define TX_PLUTO_LEN_BUFFER 8200 / 4
+#define TX_PLUTO_LEN_BUFFER 16384 / 2
 
 class pluto_sdr_tx : public rf_tx_callback
 {
@@ -30,7 +31,9 @@ public:
     ~pluto_sdr_tx();
 
     bool is_started = false;
-    void start(iio_channel *tx_lo_, iio_device *tx_);
+    void start(libusb_device_handle* usb_sdr_dev_,
+               uint8_t usb_sdr_interface_num_, uint8_t usb_sdr_ep_,
+               int len_buffer_);
     void stop();
 
 private:
@@ -40,9 +43,9 @@ private:
     struct iio_channel *tx_lo = nullptr;
     struct iio_buffer *tx_buffer = nullptr;
     bool tx_data(uint &len_buffer_, const float *ptr_buffer_);
-
+    tx_usb_plutosdr *usb_tx;
     void shutdown();
 
 };
 
-#endif // PLUTO_SDR_TX_H
+#endif // PLUTO_SDR_TX_USB_H

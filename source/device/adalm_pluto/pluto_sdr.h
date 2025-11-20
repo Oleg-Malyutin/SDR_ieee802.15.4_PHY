@@ -21,6 +21,8 @@
 
 #include <iio.h>
 
+#include "upload_sdrusbgadget.h"
+#include "sdrusbgadget.h"
 #include "pluto_sdr_rx.h"
 #include "pluto_sdr_tx.h"
 
@@ -32,7 +34,7 @@ inline void pluto_sdr_assert(int error, const char *file, int line, bool abort=t
         iio_strerror(error, err_char, sizeof(err_char));
         std::string  err_str(err_char);
         fprintf(stderr,"device assert: %s %s %d\n", err_str.c_str(), file, line);
-        if (abort) exit(error);
+//        if (abort) exit(error);
     }
 }
 
@@ -40,7 +42,7 @@ namespace Ui {
 class pluto_sdr;
 }
 
-class pluto_sdr : public QDialog
+class pluto_sdr : public QDialog , public upload_gadget_callback, public sdr_device
 {
     Q_OBJECT
 
@@ -52,9 +54,11 @@ public:
         IP,
         USB
     };
+//    usb_plutosdr *usb_direct;
     pluto_sdr_rx* dev_rx = nullptr;
     pluto_sdr_tx* dev_tx = nullptr;
-    bool open_device(enum_uri idx, QString &name_);
+    void* get_dev_tx(){return dev_tx;};
+    bool open_device(std::string &name_, std::string &err_);
     void close_device();
     bool check_connect();
 
@@ -66,13 +70,13 @@ public slots:
     void stop();
     void set_rx_rf_bandwidth(long long int bandwidht_hz_);
     void set_rx_sampling_frequency(long long int sampling_frequency_hz_);
-    int set_rx_hardwaregain(double hardwaregain_db_);
-    int set_rx_frequency(long long int frequency_hz_);
-    void get_rx_rssi(double &rssi_db_);
+    void set_rx_hardwaregain(double hardwaregain_db_);
+    void set_rx_frequency(long long int frequency_hz_);
+    void get_min_rssi(double &rssi_db_);
     void set_tx_rf_bandwidth(long long int bandwidht_hz_);
     void set_tx_sampling_frequency(long long int sampling_frequency_hz_);
-    int set_tx_hardwaregain(double hardwaregain_db_);
-    int set_tx_frequency(long long int frequency_hz_);
+    void set_tx_hardwaregain(double hardwaregain_db_);
+    void set_tx_frequency(long long int frequency_hz_);
 
 private slots:
     void on_comboBox_rx_rf_port_currentIndexChanged(const QString &arg1);
@@ -84,6 +88,10 @@ private slots:
 
 private:
     Ui::pluto_sdr *ui;
+
+    static sdr_device_new<pluto_sdr> add_sdr_device;
+
+    void show_upload(bool set_show_=true);
 
     enum io_dev{
         RX,
@@ -109,13 +117,14 @@ private:
         rx_rf_port_select,
         tx_rf_port_select
     };
-    QSettings* config;
+    QSettings *config;
     const QString faile_name = "../config/pluto_settings.cfg";
     QMap<key_map_config, QVariant> map_config;
     int set_advanced_settings(QMap<key_map_config, QVariant> map_config_);
     void save_config();
     void read_config();
 
+    sdrusbgadget *usb_direct;
     rx_thread_data_t *rx_thread_data;
     std::thread *thread_rx = nullptr;
     std::thread *thread_tx = nullptr;

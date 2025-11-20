@@ -16,13 +16,13 @@
 #define PLUTO_SDR_RX_H
 
 #include <iio.h>
+#include <ctime>
+#include <iostream>
 
 #include "device/device_type.h"
+#include "rx_usb_plutosdr.h"
 
-#define RX_PLUTO_LEN_BUFFER (16384 / 2)
-#define PLUTO_TX_GAIN_MIN -80
-#define PLUTO_TX_GAIN_MAX 0
-#define PLUTO_SAMPLES_SCALE  32767.0f
+#define RX_PLUTO_LEN_BUFFER (16384 / 16)
 
 class pluto_sdr_rx
 {
@@ -31,24 +31,35 @@ public:
     ~pluto_sdr_rx();
 
     bool is_started = false;
-    void start(iio_channel *ch_rx_, iio_device *dev_rx_, rx_thread_data_t *rx_thread_data_);
+    void start(libusb_device_handle *usb_sdr_dev_,
+               uint8_t usb_sdr_interface_num_, uint8_t usb_sdr_ep_,
+               iio_channel *rssi_channel_,
+               rx_thread_data_t *rx_thread_data_);
+    void stop();
 
 private:
-    iio_device *dev_rx;
+    rx_usb_plutosdr *usb_rx;
+
+    double rssi = 0.0;
     struct iio_channel *rssi_channel = nullptr;
-    struct iio_channel *rx_channel_i = nullptr;
-    struct iio_channel *rx_channel_q = nullptr;
-    struct iio_buffer *rx_buffer = nullptr;
-    std::complex<float> *buffer;
-//    moving_average<float, 32> avg_energy_detect;
+
+    int len_buffer = 0;
+    std::complex<float> *ptr_buffer;
+    std::complex<float> *buffer_a;
+    std::complex<float> *buffer_b;
+    bool swap = false;
+
+    rx_usb_transfer* transfer;
+    static int rx_callback(rx_usb_transfer *transfer_);
+
     int c = 0;
     rx_thread_data_t *rx_thread_data;
+
     void work();
-    void rx_data();
+    void rx_data(std::unique_lock<std::mutex> &lock_);
     void rx_rssi();
     void rx_off();
-    void stop();
-    void shutdown();
+
 };
 
 #endif // PLUTO_SDR_RX_H

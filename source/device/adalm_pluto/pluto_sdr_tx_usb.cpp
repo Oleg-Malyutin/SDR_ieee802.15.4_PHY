@@ -12,35 +12,29 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
-#include "pluto_sdr_tx.h"
+#include "pluto_sdr_tx_usb.h"
 #include "pluto_sdr.h"
 
 //-----------------------------------------------------------------------------------------
 pluto_sdr_tx::pluto_sdr_tx()
 {
+    usb_tx = new tx_usb_plutosdr;
 }
 //-----------------------------------------------------------------------------------------
 pluto_sdr_tx::~pluto_sdr_tx()
 {
     fprintf(stderr, "pluto_sdr_tx::~pluto_sdr_tx() start\n");
+    delete usb_tx;
     fprintf(stderr, "pluto_sdr_tx::~pluto_sdr_tx() stop\n");
 }
 //-----------------------------------------------------------------------------------------
-void pluto_sdr_tx::start(iio_channel *tx_lo_, iio_device *tx_)
+void pluto_sdr_tx::start(libusb_device_handle* usb_sdr_dev_,
+                         uint8_t usb_sdr_interface_num_, uint8_t usb_sdr_ep_,
+                         int len_buffer_)
 {
     stop();
 
-    tx_lo = tx_lo_;
-    tx = tx_;
-    tx_channel_i = iio_device_find_channel(tx, "voltage0", true);
-    tx_channel_q = iio_device_find_channel(tx, "voltage1", true);
-    iio_channel_enable(tx_channel_i);
-    iio_channel_enable(tx_channel_q);
-    int e = iio_device_set_kernel_buffers_count(tx, 2);
-    fprintf(stderr, "tx iio_device_set_kernel_buffers_count=%d success=%d\n", 2, e);
-    tx_buffer = iio_device_create_buffer(tx, TX_PLUTO_LEN_BUFFER, false);
-
-    iio_channel_attr_write_longlong(tx_lo, "powerdown", 1);
+    usb_tx->start(usb_sdr_dev_, usb_sdr_interface_num_, usb_sdr_ep_, 1, len_buffer_);
 
     is_started = true;
 
@@ -50,43 +44,19 @@ void pluto_sdr_tx::stop()
 {
     if(is_started){
         is_started = false;
-        shutdown();
+        usb_tx->stop();
     }
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr_tx::shutdown()
 {
-    iio_buffer_destroy(tx_buffer);
-    iio_channel_disable(tx_channel_i);
-    iio_channel_disable(tx_channel_q);
 }
 //-----------------------------------------------------------------------------------------
 bool pluto_sdr_tx::tx_data(uint &len_buffer_, const float *ptr_buffer_)
 {
-    iio_channel_attr_write_longlong(tx_lo, "powerdown", 0);
+    usb_tx->tx_data(len_buffer_, ptr_buffer_);
 
-    bool succes = false;
-
-    int16_t *ptr_tx_buffer = static_cast<int16_t*>(iio_buffer_first(tx_buffer, tx_channel_i));
-    for (uint i = 0; i < len_buffer_; ++i){
-        ptr_tx_buffer[i] = ptr_buffer_[i] * PLUTO_SAMPLES_SCALE;
-    }
-    uint64_t bytes = iio_buffer_push_partial(tx_buffer, len_buffer_ / 2);
-    if (bytes == (uint)len_buffer_ * sizeof(int16_t)){
-
-        succes = true;
-
-    }
-    else{
-        fprintf(stderr, "pluto_sdr_tx::tx_data() lost:--------------------------need=%ld transmitted=%ld\n",
-                len_buffer_ * sizeof(int16_t), bytes);
-    }
-    fprintf(stderr, "pluto_sdr_tx::tx_data() len=%ld transmitted=%ld\n",
-            len_buffer_ * sizeof(int16_t), bytes);
-
-    iio_channel_attr_write_longlong(tx_lo, "powerdown", 1);
-            ;
-    return succes;
+    return true;
 }
 //-----------------------------------------------------------------------------------------
 
