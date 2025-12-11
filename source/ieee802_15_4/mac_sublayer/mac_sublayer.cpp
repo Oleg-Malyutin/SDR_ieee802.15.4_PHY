@@ -118,7 +118,7 @@ mcps_data_confirm_t mac_sublayer::mcps_data_request(mcps_data_request_t *mcps_da
 mcps_data_confirm_t mac_sublayer::send_mpdu(mpdu_t mpdu_)
 {
     mcps_data_confirm_t mcps_data_confirm;
-    std::unique_lock<std::mutex> read_lock(wait_confirm.mutex);
+
     int nb = 0;
 
     if(callback_plme->plme_set_trx_state_request(RX_ON) == SUCCESS){
@@ -143,18 +143,12 @@ mcps_data_confirm_t mac_sublayer::send_mpdu(mpdu_t mpdu_)
 
             }
             else{
-
                 uint16_t delay;
                 do{
                     delay = (uint16_t)rand();
                 }while (delay == 0);
                 int csma_time_ms = delay % (uint16_t)((1 << mac_pib->min_be) - 1);
-                timer_scan->start(csma_time_ms, callback_timer_scan, this);
-                while(timer_scan->is_active){
-                    wait_confirm.condition.wait(read_lock);
-                }
-                wait_confirm.mutex.unlock();
-
+                std::this_thread::sleep_for(std::chrono::milliseconds(csma_time_ms));
             }
 
         }
@@ -450,6 +444,8 @@ mlme_scan_confirm_t mac_sublayer::mlme_scan_request(scan_type_t scan_type_, uint
         break;
     case orphan_scan:
         break;
+    default:
+        break;
     }
 
     return mlme_scan_confirm;
@@ -469,9 +465,9 @@ mlme_scan_confirm_t mac_sublayer::mlme_energy_detect_scan(scan_type_t scan_type_
 
                 callback_ui->channel_scan(scan_current_channel, false);
 
-                timer_scan->start(scan_duration_ms_);
                 uint8_t max_energy_level = 0;
-                while(timer_scan->is_active){
+                timer_scan->start(scan_duration_ms_);
+                while(timer_scan->is_active.load()){
 
                     plme_ed_confirm_t plme_ed_confirm = callback_plme->plme_ed_request();
 
@@ -537,7 +533,6 @@ mlme_scan_confirm_t mac_sublayer::mlme_active_scan(scan_type_t scan_type_, uint3
 
     pan_description_list.clear();
 
-    std::unique_lock<std::mutex> read_lock(wait_confirm.mutex);
     uint32_t unscanned_shannels = 0;
 
 //    scan_current_channel = 15;
@@ -548,7 +543,6 @@ mlme_scan_confirm_t mac_sublayer::mlme_active_scan(scan_type_t scan_type_, uint3
 
             int nb = 0;
             bool scaned = false;
-            int num_scan = 1;
 
             if(callback_plme->plme_set_request(phyCurrentChannel, &scan_current_channel).status == SUCCESS){
 
@@ -580,14 +574,7 @@ auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(end_ti
                                     pan_description.coord_pan_id = 0x0;
                                     pan_description.coord_address = 0x0;
                                     pan_description_list.push_back(pan_description);
-
-                                    timer_scan->start(scan_duration_ms_, callback_timer_scan, this);
-                                    while(timer_scan->is_active){
-                                        wait_confirm.condition.wait(read_lock);
-                                    }
-                                    wait_confirm.mutex.unlock();
-                                    fprintf(stderr, "mac_sublayer::mlme_active_scan()4 channel %d\n", scan_current_channel);
-
+                                    std::this_thread::sleep_for(std::chrono::milliseconds(scan_duration_ms_));
                                 }
 
                                 beacon_request.mpdu[idx_sn] = ++sn;
@@ -600,18 +587,12 @@ auto elapsed_time = std::chrono::duration_cast<std::chrono::microseconds>(end_ti
 
                         }
                         else{
-
                             uint16_t delay;
                             do{
                                 delay = (uint16_t)rand();
                             }while (delay == 0);
                             int csma_time_ms = delay % (uint16_t)((1 << mac_pib->min_be) - 1);
-                            timer_scan->start(csma_time_ms, callback_timer_scan, this);
-                            while(timer_scan->is_active){
-                                wait_confirm.condition.wait(read_lock);
-                            }
-                            wait_confirm.mutex.unlock();
-
+                            std::this_thread::sleep_for(std::chrono::milliseconds(csma_time_ms));
                         }
 
                     }
