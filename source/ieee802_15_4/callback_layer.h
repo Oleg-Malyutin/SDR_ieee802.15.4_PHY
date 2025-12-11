@@ -10,10 +10,6 @@ public:
     virtual ~phy_layer_callback(){};
 
     virtual status_t pd_data_request(pd_data_request_t *pd_data_)=0;
-
-    virtual void callback_demodulator_rssi()=0;
-    virtual void callback_demodulator_rx()=0;
-
     virtual void callback_stop_phy_layer()=0;
 };
 

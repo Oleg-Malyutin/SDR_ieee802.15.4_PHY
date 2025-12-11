@@ -102,8 +102,10 @@ void oqpsk_demodulator::start(rx_thread_data_t *rx_thread_data_, rx_sap_t *rx_sa
     stop();
     is_started = true;
     swap_v_psdu = false;
+    rx_thread_data = rx_thread_data_;
+    rx_sap = rx_sap_;
 
-    work(rx_thread_data_, rx_sap_);
+    work();
 }
 //--------------------------------------------------------------------------------------------------
 void oqpsk_demodulator::stop()
@@ -114,58 +116,44 @@ void oqpsk_demodulator::stop()
     }
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::work(rx_thread_data_t *rx_thread_data_, rx_sap_t *rx_sap_)
+void oqpsk_demodulator::work()
 {
-    rx_thread_data_t *rx_thread_data = rx_thread_data_;
     std::unique_lock<std::mutex> read_lock(rx_thread_data->mutex);
     while (!rx_thread_data->stop_demodulator){
-        rx_thread_data->condition_value.wait(read_lock);
+        rx_thread_data->condition.wait(read_lock);
         if(rx_thread_data->ready){
-
-            if(rx_thread_data->mode == rx_mode_data){
-                demodulator(rx_thread_data->channel,
-                            rx_thread_data->len_buffer, rx_thread_data->ptr_buffer,
-                            rx_sap_);
-            }
-            else if(rx_thread_data->mode == rx_mode_rssi){
-                if(!rx_sap_->ready_rssi){
-                    rx_sap_->ready_rssi = true;
-                    rx_sap_->mode = rx_mode_rssi;
-                    rx_sap_->rssi = rx_thread_data->rssi;
-
-                    callback_phy->callback_demodulator_rssi();
-
-                }
-            }
-            rx_thread_data->set_mode = rx_sap_->set_mode;
-
             rx_thread_data->ready = false;
+            demodulator();
+            rx_sap->rssi_mutex.lock();
+            rx_sap->rssi_value.store(rx_thread_data->rssi);
+            rx_sap->rssi_ready.store(true);
+            rx_sap->rssi_mutex.unlock();
+            rx_sap->rssi_condition.notify_all();
         }
-
     }
     stop();
     callback_device->error_callback(rx_thread_data->status);
     fprintf(stderr, "oqpsk_demodulator::work finish\n");
 }
 //--------------------------------------------------------------------------------------------------
-void oqpsk_demodulator::demodulator(int &channel_, int in_len_, std::complex<float> *iq_data_,
-                                    rx_sap_t *rx_sap_)
+void oqpsk_demodulator::demodulator()
 {
 //    fprintf(stderr, "ed %f\n", energy_detect_);
 
-    int in_len = in_len_;
-    std::complex<float> *iq_data = iq_data_;
+    int channel = rx_thread_data->channel;
+    int in_len = rx_thread_data->len_buffer;
+    std::complex<float> *iq_data = rx_thread_data->ptr_buffer;
     float energy_signal;
     complex *data_delay_seg;
     complex out_double_correlator;
     double level;
     float angle_local_correlation;
-    uint8_t *p_symbols;
+    uint8_t *ptr_symbols;
     if(swap_v_psdu){
-        p_symbols = v2_symbols;
+        ptr_symbols = v2_symbols;
     }
     else{
-        p_symbols = v1_symbols;
+        ptr_symbols = v1_symbols;
     }
 #ifdef REITING
 auto start_time = std::chrono::steady_clock::now();
@@ -174,28 +162,13 @@ auto start_time = std::chrono::steady_clock::now();
     for(int i = 0; i < in_len; ++i){
 
         complex data = iq_data[i];
-//            energy_detect = avg_level(norm(data));
-
         switch (state){
-
-//        case detect_skip:
-
-//            ++idx_i;
-//            if(idx_i == 10){
-
-//                state = detect_preamble;
-
-//            }
-
-//            break;
 
         case detect_signal:
 
             data_delay_seg = delay_seg_for_double_correlator.buffer(data);
             out_double_correlator = double_correlator(data_delay_seg);
             level = norm(out_double_correlator);
-//            level = /*std::sqrt(*/out_double_correlator.real() * out_double_correlator.real() +
-//                              out_double_correlator.imag() + out_double_correlator.imag()/*)*/;
 
             energy_signal = avg_level(level);
 
@@ -220,8 +193,6 @@ auto start_time = std::chrono::steady_clock::now();
 
                     state = detect_preamble;
 
-//                    fprintf(stderr, "ed %f  %f  %f\n", level_thr, energy_detect, energy_detect_2);
-
                 }
             }
             plot_data.real(level);
@@ -245,30 +216,22 @@ auto start_time = std::chrono::steady_clock::now();
                 if(idx_i == LEN_CHIP || idx_i == (LEN_CHIP - 1) || idx_i == (LEN_CHIP + 1)){
                     idx_i = 0;
                     ++idx_preamble;
-//                    fprintf(stderr, "++idx_preamble %d\n", idx_preamble);
                     sum_double_correlation += max_double_correlation;
                     sum_cross_correlation += cross_correlation;
                     cross_correlation = {0.0f, 0.0f};
                     if(idx_preamble == 8){
                         idx_preamble = 0;
 
-                        rx_sap_->is_signal = true;
+                        rx_sap->is_signal = true;
 
                         state = frequency_offset_estimation;
-
-//                        fprintf(stderr, "frequency_offset_estimation \n");
 
                         break;
 
                     }
-//                    else{
-
-//                        state = detect_skip;
-
-//                    }
-//                    fprintf(stderr, "ed %f  %f  %f\n", level_thr, energy_detect, energy_detect_2);
                 }
                 else{
+                    rx_sap->is_signal = false;
                     reset_demodulator();
 
                     break;
@@ -276,6 +239,7 @@ auto start_time = std::chrono::steady_clock::now();
                 }
             }
             if(idx_i > (LEN_CHIP + 1)){
+                rx_sap->is_signal = false;
                 reset_demodulator();
 
                 break;
@@ -480,7 +444,7 @@ auto start_time = std::chrono::steady_clock::now();
                 if(len_symbols > MaxPHYPacketSize * 2 || len_symbols < 5){
                     fprintf(stderr, "oqpsk_demodulator::demodulator out len_symbols %d\n", len_symbols);
 
-                    rx_sap_->is_signal = false;
+                    rx_sap->is_signal = false;
                     reset_demodulator();
 
                 }
@@ -529,15 +493,7 @@ auto start_time = std::chrono::steady_clock::now();
                symbol_detected += 8;
             }
 
-//            p_symbols->push_back(symbol_detected);
-            p_symbols[idx_payload++] = symbol_detected;
-
-//            if(idx_payload == MaxPHYPacketSize * 2){
-
-//                fprintf(stderr, "idx_payload == MaxPHYPacketSize !!!!!!!!!\n");
-
-//                reset_demodulator();
-//            }
+            ptr_symbols[idx_payload++] = symbol_detected;
 
             angle_local_correlation = atan2f(imag_sum[symbol_detected],
                                              i_correlation[symbol_detected] +
@@ -553,30 +509,28 @@ auto start_time = std::chrono::steady_clock::now();
             pre_angle_local_correlation = angle_local_correlation;
 
             if(idx_payload == len_symbols) {
-                rx_sap_->is_signal = false;
-//                if(!rx_sap_->ready){
-                    rx_sap_->ready = true;
-                    rx_sap_->channel = channel_;
-                    rx_sap_->mode = rx_mode_data;
-                    rx_sap_->len_symbols = len_symbols;
-                    rx_sap_->symbols =  p_symbols;
 
-                    callback_phy->callback_demodulator_rx();
+                rx_sap->mutex.lock();
 
-                    swap_v_psdu = !swap_v_psdu;
-                    if(swap_v_psdu){
-                        p_symbols = v2_symbols;
-                    }
-                    else{
-                        p_symbols = v1_symbols;
-                    }
-//                }
-//                else{
-//                    fprintf(stderr, "demodulator : skip buffer\n");
-//                }
+                rx_sap->channel = channel;
+                rx_sap->len_symbols = len_symbols;
+                rx_sap->symbols =  ptr_symbols;
+                rx_sap->ready.store(true);
+
+                rx_sap->mutex.unlock();
+                rx_sap->condition.notify_all();
+
+                swap_v_psdu = !swap_v_psdu;
+                if(swap_v_psdu){
+                    ptr_symbols = v2_symbols;
+                }
+                else{
+                    ptr_symbols = v1_symbols;
+                }
 
                 callback_device->constelation_callback(idx_const_buf, constelation_buffer);
 
+                rx_sap->is_signal = false;
                 reset_demodulator();
             }
 

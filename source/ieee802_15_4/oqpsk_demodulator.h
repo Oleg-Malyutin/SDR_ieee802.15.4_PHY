@@ -45,7 +45,6 @@ private:
     void init_local();
 
     enum rx_state{
-        detect_skip,
         detect_signal,
         detect_preamble,
         frequency_offset_estimation,
@@ -134,11 +133,13 @@ private:
     bool swap_v_psdu;
 
     // thread
+    rx_sap_t *rx_sap;
+    rx_thread_data_t *rx_thread_data;
     phy_layer_callback *callback_phy;
     device_callback *callback_device;
-    void work(rx_thread_data_t *rx_thread_data_, rx_sap_t *rx_sap_);
+    void work();
     void stop();
-    void demodulator(int &channel_, int in_len_, std::complex<float> *iq_data_, rx_sap_t *rx_sap_);
+    void demodulator();
     void reset_demodulator();
 
     // plot
