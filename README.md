@@ -11,7 +11,8 @@ Processor: Intel© Core™ i5-8600 CPU @ 3.10GHz × 6
 Supported devices:
 1. PlutoSDR (RX , TX)
 2. HackRF One (With custom firmware. See /device/hackrf_one/firmware/Readme.txt)
-3. ...
+3. USRP B200-mini-i
+4. ...
 
 Received signal parameters:
 1. O-QPSK (IEEE 802.15.4 - 2003)
