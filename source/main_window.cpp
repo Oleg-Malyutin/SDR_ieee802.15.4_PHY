@@ -64,6 +64,7 @@ main_window::main_window(QWidget *parent)
     connect(dev, &device::remove_device, this, &main_window::remove_device);
     connect(dev, &device::device_status, this, &main_window::device_status);
     connect(dev, &device::device_open, this, &main_window::device_open);
+    connect(dev, &device::set_max_rx_gain, this, &main_window::set_max_rx_gain);
     connect(this, &main_window::open_device, dev, &device::open_device);
     connect(this, &main_window::device_start, dev, &device::device_start);
     connect(this, &main_window::device_stop, dev, &device::device_stop);
@@ -103,7 +104,7 @@ main_window::main_window(QWidget *parent)
         ui->comboBox_tx_channel->addItem(QString::number(i));
     }
     ui->comboBox_channel->setCurrentIndex(ieee802_15_4_info::channel);
-    ui->verticalSlider->setValue(69);
+    ui->verticalSlider_rx_gain->setDisabled(true);
     ui->pushButton_start->setDisabled(true);
 
     ui->tableWidget_scan_info->setSelectionMode(QAbstractItemView::NoSelection);
@@ -227,10 +228,19 @@ void main_window::on_comboBox_tx_channel_currentIndexChanged(int index)
     dev->set_tx_frequency(index);
 }
 //-----------------------------------------------------------------------------------------
+void main_window::set_max_rx_gain(int value)
+{
+    double gain_db = value;
+    ui->label_rx_gain_db->setText(QString::number(gain_db) + "dB");
+    ui->verticalSlider_rx_gain->setMaximum(value);
+    ui->verticalSlider_rx_gain->setValue(value);
+    ui->verticalSlider_rx_gain->setEnabled(true);
+}
+//-----------------------------------------------------------------------------------------
 void main_window::on_verticalSlider_valueChanged(int value)
 {
     double gain_db = value;
-    ui->label_gain_db->setText(QString::number(gain_db) + "dB");
+    ui->label_rx_gain_db->setText(QString::number(gain_db) + "dB");
     dev->set_rx_hardwaregain(gain_db);
 }
 //-----------------------------------------------------------------------------------------

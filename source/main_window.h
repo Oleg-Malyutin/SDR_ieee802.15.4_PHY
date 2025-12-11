@@ -42,6 +42,7 @@ private slots:
 
     void on_comboBox_channel_currentIndexChanged(int index);
     void on_verticalSlider_valueChanged(int value);
+    void set_max_rx_gain(int value);
     void mac_protocol_data_units(mpdu_analysis_t *mpdu_);
 
     void on_pushButton_start_clicked();

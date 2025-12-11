@@ -765,7 +765,7 @@
          </property>
          <layout class="QGridLayout" name="gridLayout_2">
           <item row="1" column="0">
-           <widget class="QLabel" name="label_gain_db">
+           <widget class="QLabel" name="label_rx_gain_db">
             <property name="maximumSize">
              <size>
               <width>80</width>
@@ -778,12 +778,12 @@
            </widget>
           </item>
           <item row="2" column="0">
-           <widget class="QSlider" name="verticalSlider">
+           <widget class="QSlider" name="verticalSlider_rx_gain">
             <property name="minimum">
              <number>-3</number>
             </property>
             <property name="maximum">
-             <number>71</number>
+             <number>76</number>
             </property>
             <property name="orientation">
              <enum>Qt::Vertical</enum>

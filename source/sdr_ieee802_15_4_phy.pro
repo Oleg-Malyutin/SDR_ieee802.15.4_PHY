@@ -23,7 +23,6 @@ CONFIG += c++17
 CONFIG += thread
 
 QMAKE_CXXFLAGS += -Ofast
-QMAKE_CXXFLAGS += -ftree-vectorize
 
 # You can make your code fail to compile if it uses deprecated APIs.
 # In order to do so, uncomment the following line.
@@ -43,6 +42,7 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 plutosdr = 1
 hackrf = 1
 limesdr = 0
+usrp = 1
 
 equals(plutosdr,1):{
     QMAKE_CXXFLAGS += -DUSE_PLUTOSDR
@@ -107,6 +107,21 @@ equals(limesdr,1):{
         device/limesdr_mini/lime_default.cfg
     }
 
+equals(usrp,1):{
+    QMAKE_CXXFLAGS += -DUSE_USRP
+    SOURCES += \
+        device/usrp/usrp.cpp \
+        device/usrp/usrp_rx.cpp \
+        device/usrp/usrp_tx.cpp
+    HEADERS += \
+        device/usrp/usrp.h \
+        device/usrp/usrp_rx.h \
+        device/usrp/usrp_tx.h
+    FORMS += \
+        device/usrp/usrp.ui
+    }
+
+
 SOURCES += \
     device/device.cpp \
     higher_layer.cpp \
@@ -156,6 +171,7 @@ LIBS += -lssh
 LIBS += -liio
 #LIBS += -lad9361
 LIBS += -lLimeSuite
+LIBS += -luhd
 }
 win32 {
 LIBS += -L$$PWD/device/limesdr_mini/driver/ConnectionFTDI/FTD3XXLibrary/x64/ -lFTD3XX
@@ -169,6 +185,10 @@ LIBS += -L$$PWD/device/adalm_pluto/libssh/ -lssh
 INCLUDEPATH += $$PWD/device/adalm_pluto/libssh/include
 DEPENDPATH += $$PWD/device/adalm_pluto/libssh/include
 LIBS += -lws2_32
+LIBS += -L$$PWD/libuhd/ -luhd
+INCLUDEPATH += $$PWD/libuhd/
+INCLUDEPATH += $$PWD/libuhd/uhd
+DEPENDPATH += $$PWD/libuhd/
 }
 
 
