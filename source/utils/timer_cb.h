@@ -4,6 +4,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
 typedef void(*cb_fn)(void *ctx_);
 
@@ -13,7 +14,7 @@ public:
     timer_cb();
     ~timer_cb();
 
-    bool is_active = false;
+    std::atomic<bool> is_active = false;
     void start(int ms_, cb_fn cb_=nullptr, void *ctx_=nullptr);
     void stop();
 

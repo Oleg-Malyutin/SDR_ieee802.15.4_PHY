@@ -16,16 +16,14 @@ timer_cb::~timer_cb()
 void timer_cb::start(int ms_, cb_fn cb_, void *ctx_)
 {
     ctx = ctx_;
-    is_active = true;
+    is_active.store(true);
     thread_timer = new std::thread(&timer_cb::work, this, ms_, cb_);
 }
 //-----------------------------------------------------------------------------------------
 void timer_cb::stop()
 {
-    if(thread_timer != nullptr){
+    if(thread_timer->joinable()) {
         thread_timer->join();
-        delete thread_timer;
-        thread_timer = nullptr;
     }
 }
 //-----------------------------------------------------------------------------------------
@@ -33,6 +31,6 @@ void timer_cb::work(int ms_, cb_fn cb_)
 {
     std::this_thread::sleep_for(std::chrono::milliseconds(ms_));
     if(cb_ != nullptr) cb_(ctx);
-    is_active = false;
+    is_active.store(false);
 }
 //-----------------------------------------------------------------------------------------
