@@ -133,8 +133,8 @@ void plot::greate_graph(int _len_data, std::complex<float> *_data)
     case type_constelation:
         current_plot->xAxis->setLabel("Inphase");
         current_plot->yAxis->setLabel("Quadrature");
-        current_plot->xAxis->setRange(-5, 5);
-        current_plot->yAxis->setRange(-5, 5);
+        current_plot->xAxis->setRange(-1.5, 1.5);
+        current_plot->yAxis->setRange(-1.5, 1.5);
 
         pen.setWidth(1);
         pen.setColor(Qt::blue);
