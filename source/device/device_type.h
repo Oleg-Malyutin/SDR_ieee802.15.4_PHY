@@ -55,7 +55,7 @@ typedef struct rx_thread_data {
     bool ready = false;
     bool stop = false;
     bool stop_demodulator = false;
-    std::condition_variable condition_value;
+    std::condition_variable condition;
     std::mutex mutex;
     int len_buffer = 0;
     std::complex<float> *ptr_buffer = nullptr;
@@ -91,11 +91,12 @@ public:
     virtual void stop()=0;
     virtual void set_rx_rf_bandwidth(long long int bandwidht_hz_)=0;
     virtual void set_rx_sampling_frequency(long long int sampling_frequency_hz_)=0;
+    virtual void get_rx_max_hardwaregain(double &hardwaregain_db_)=0;
     virtual void set_rx_hardwaregain(double hardwaregain_db_)=0;
     virtual void set_rx_frequency(long long int frequency_hz_)=0;
-    virtual void get_min_rssi(double &rssi_db_)=0;
     virtual void set_tx_rf_bandwidth(long long int bandwidht_hz_)=0;
     virtual void set_tx_sampling_frequency(long long int sampling_frequency_hz_)=0;
+    virtual void get_tx_max_hardwaregain(double &hardwaregain_db_)=0;
     virtual void set_tx_hardwaregain(double hardwaregain_db_)=0;
     virtual void set_tx_frequency(long long int frequency_hz_)=0;
 };

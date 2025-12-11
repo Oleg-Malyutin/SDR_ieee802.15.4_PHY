@@ -55,6 +55,7 @@ signals:
     void device_found(QString name_);
     void remove_device(QString name_);
     void device_open();
+    void set_max_rx_gain(int value);
 
     void plot_preamble_correlaion(int len_plot_, std::complex<float>* plot_buffer_);
     void plot_sfd_correlation(int len_plot_, std::complex<float>* plot_buffer_);

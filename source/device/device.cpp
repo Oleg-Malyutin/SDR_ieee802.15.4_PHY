@@ -15,26 +15,32 @@
 #include "device.h"
 
 #include <QDateTime>
+#include <QThread>
 
 #include "utils/zep.h"
 
-#include "adalm_pluto/pluto_sdr.h"
-#include "limesdr_mini/lime_sdr.h"
-#include "hackrf_one/hackrf_one.h"
-
 std::string pluto_name = "PlutoSDR";
 #ifdef USE_PLUTOSDR
+#include "adalm_pluto/pluto_sdr.h"
 sdr_device_new<pluto_sdr> pluto_sdr::add_sdr_device(pluto_name);
 #endif
 
 std::string lime_name = "LimeSDR";
 #ifdef USE_LIMESDR
+#include "limesdr_mini/lime_sdr.h"
 sdr_device_new<lime_sdr> lime_sdr::add_sdr_device(lime_name);
 #endif
 
 std::string hackrf_name = "HackRF";
 #ifdef USE_HACKRF
+#include "hackrf_one/hackrf_one.h"
 sdr_device_new<hackrf_one> hackrf_one::add_sdr_device(hackrf_name);
+#endif
+
+std::string usrp_name = "USRP";
+#ifdef USE_HACKRF
+#include "usrp/usrp.h"
+sdr_device_new<usrp> usrp::add_sdr_device(usrp_name);
 #endif
 
 //-----------------------------------------------------------------------------------------
@@ -130,6 +136,12 @@ void device::scan_usb_device()
 #endif
         }
 
+        if(desc.idVendor == 0x2500 &&  desc.idProduct == 0x0020){
+#ifdef USE_USRP
+            emit device_found(QString::fromStdString(usrp_name));
+#endif
+        }
+
     }
     libusb_free_device_list(devs, 1);
     libusb_exit(NULL);
@@ -142,32 +154,28 @@ void device::open_device(QString name_)
         timer->stop();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    std::string name = name_.toStdString();
+    sdr_name = name_.toStdString();
     std::string err;
-    if(name == pluto_name){
-        sdr_name = pluto_name;
-    }
-    else if(name == lime_name){
-        sdr_name = lime_name;
-    }
-    else if(name == hackrf_name){
-        sdr_name = hackrf_name;
-    }
-
     sdr = sdr_factory::instantiate(sdr_name);
 
-    emit device_status(QString::fromStdString(sdr_name) + ": Wait for to load...");
+    emit device_status(QString::fromStdString(sdr_name) + ": wait for to load...");
 
+    double gain;
+    if(sdr->open_device(sdr_name, err)){
 
-    if(sdr->open_device(sdr_name, err)/* || pluto->get_device(pluto_sdr::IP)*/){
         sdr->set_rx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
         sdr->set_rx_sampling_frequency(ieee802_15_4_info::samplerate);
         sdr->set_rx_frequency(ieee802_15_4_info::rf_frequency);
-        sdr->set_rx_hardwaregain(69);
+        sdr->get_rx_max_hardwaregain(gain);
+        sdr->set_rx_hardwaregain(gain);
+
+        emit set_max_rx_gain(gain);
+
         sdr->set_tx_rf_bandwidth(ieee802_15_4_info::rf_bandwidth);
         sdr->set_tx_sampling_frequency(ieee802_15_4_info::samplerate);
         sdr->set_tx_frequency(ieee802_15_4_info::rf_frequency);
-        sdr->set_tx_hardwaregain(PLUTO_TX_GAIN_MAX);
+        sdr->get_tx_max_hardwaregain(gain);
+        sdr->set_tx_hardwaregain(gain);
         sdr_is_open = true;
 
         emit device_open();
@@ -177,7 +185,7 @@ void device::open_device(QString name_)
         sdr->close_device();
         timer->start(1000);
 
-        emit device_status(QString::fromStdString(name + err));
+        emit device_status(QString::fromStdString(sdr_name + err));
 
     }
 }
@@ -206,11 +214,9 @@ void device::device_start()
     }
     phy->modulator->connect_tx((rf_tx_callback*)sdr->get_dev_tx());
     sdr->start(rx_thread_data);
-    double min_rssi;
-    sdr->get_min_rssi(min_rssi);
     sdr_is_start = true;
     // TODO : protocol start;
-    phy_thread = new std::thread(&phy_layer::start, phy, rx_thread_data, min_rssi);
+    phy_thread = new std::thread(&phy_layer::start, phy, rx_thread_data);
     phy_thread->detach();
 }
 //-----------------------------------------------------------------------------------------
@@ -286,6 +292,8 @@ void device::set_channel(int channel_, bool &status_)
     if(set_tx_frequency(channel_) != 0){
         status_ = false;
     }
+
+        QThread::usleep(30);
 }
 //-----------------------------------------------------------------------------------------
 void device::error_callback(enum_device_status status_)
