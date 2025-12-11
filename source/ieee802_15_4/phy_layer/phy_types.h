@@ -6,6 +6,7 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
 
 #define MaxPHYPacketSize (127)
@@ -66,17 +67,17 @@ typedef struct rx_sap_tag{
     rx_mode mode;
     int channel;
 
-    bool is_signal = false;
+    std::atomic<bool> is_signal = false;
     int len_symbols;
     uint8_t *symbols;
-    bool ready;
+    std::atomic<bool> ready;
     std::mutex mutex;
     std::condition_variable condition;
 
-    double rssi;
-    bool ready_rssi;
-    std::mutex mutex_rssi;
-    std::condition_variable condition_rssi;
+    std::atomic<float> rssi_value;
+    std::atomic<bool> rssi_ready;
+    std::mutex rssi_mutex;
+    std::condition_variable rssi_condition;
 
     bool ready_confirm;
     std::condition_variable condition_confirm;

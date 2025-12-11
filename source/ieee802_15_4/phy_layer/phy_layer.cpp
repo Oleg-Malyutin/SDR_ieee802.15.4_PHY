@@ -37,13 +37,10 @@ phy_layer::~phy_layer()
     fprintf(stderr, "phy_layer::~phy_layer() stop\n");
 }
 //--------------------------------------------------------------------------------------------------
-void phy_layer::start(rx_thread_data_t *rx_thread_data_,
-                      double min_rssi_)
+void phy_layer::start(rx_thread_data_t *rx_thread_data_)
 {
     stop();
     is_started = true;
-
-    min_rssi = min_rssi_;
 
     modulator_thread = new std::thread(&oqpsk_modulator::start, modulator, tx_sap);
     modulator_thread->detach();
@@ -74,7 +71,7 @@ void phy_layer::stop()
         while(demodulator->is_started){
             rx_thread_data->ready = false;
             rx_thread_data->stop_demodulator = true;
-            rx_thread_data->condition_value.notify_all();
+            rx_thread_data->condition.notify_all();
             rx_sap->ready = false;
             rx_sap->condition.notify_all();
             rx_sap->ready_confirm = false;
@@ -112,34 +109,91 @@ void phy_layer::work()
 {
     start_on = true;
     std::unique_lock<std::mutex> read_lock(rx_sap->mutex);
-    while (start_on){
+    while(start_on){
         rx_sap->condition.wait(read_lock);
-        if(rx_sap->ready){
-            switch (rx_sap->mode) {
-            case rx_mode_data:
-                rx_data();
-                break;
-            case rx_mode_rssi:
-                break;
-            case rx_mode_off:
-                break;
-            }
+        if(rx_sap->ready.load()){
+            rx_sap->ready.store(false);
+            rx_data();
         }
-//fprintf(stderr, "phy_layer::work() event_mode = %d   rx_sap->mode = %d\n", event_mode, rx_sap->mode);
     }
     stop();
     fprintf(stderr, "phy_layer::work() phy_layer::work() finish\n");
 }
 //--------------------------------------------------------------------------------------------------
-void phy_layer::callback_demodulator_rssi()
+void phy_layer::rx_data()
 {
-    rx_sap->mutex_rssi.lock();
+    int idx_symbol = 0;
+    int len = rx_sap->len_symbols;
+    uint8_t *rx_symbols = rx_sap->symbols;
+    int len_psdu = 0;
+    uint8_t octet;// 8 bits
+    uint8_t symbol;// 4 bits
+    uint16_t crc = 0x0;// 4 x symbol
+    for(int i = 0; i < len - 4; ++i){
+        symbol = rx_symbols[i];
+        // need two symbols for octet
+        if(++idx_symbol < 2){
+            octet = symbol;
+        }
+        else{
+            idx_symbol = 0;
+            octet += symbol << 0x4;
+            pd_data->mpdu[len_psdu++] = octet;
+            // revert bit to LSB
+            uint8_t mask;
+            uint8_t b = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                mask = 1 << bit;
+                b |= ((octet & mask) >> bit) << (7 - bit);
+            }
+            // crc16
+            uint16_t idx = ((crc >> 8) ^ b) & 0xff;
+            crc = ((crc << 8) ^ CRC_CCITT_TABLE[idx]) & 0xffff;
+        }
+    }
+    //frame check sequence (FCS)
+    uint16_t fcs = 0x0;
+    idx_symbol = 0;
+    int idx_byte = 0;
+    for(int i = len - 4; i < len; ++i){
+        symbol = rx_symbols[i];
+        // need two symbols for octet
+        if(++idx_symbol < 2){
+            octet = symbol;
+        }
+        else{
+            idx_symbol = 0;
+            octet += symbol << 0x4;
+            pd_data->mpdu[len_psdu++] = octet;
+            // revert bit to LSB
+            uint8_t mask;
+            uint8_t b = 0;
+            for (int bit = 0; bit < 8; ++bit) {
+                mask = 1 << bit;
+                b |= ((octet & mask) >> bit) << (7 - bit);
+            }
+            if(++idx_byte < 2){
+                fcs = b << 0x8;
+            }
+            else{
+                fcs += b;
+            }
+        }
+    }
+    // check CRC
+    if(crc == fcs){
+        pd_data->ppdu_link_quality = 0x0;
+        pd_data->mpdu_length = len_psdu;
 
-    rx_sap->ready_rssi = true;
-    rx_sap->set_mode = rx_mode_data;
+        callback_mac->pd_data_indication(pd_data);
 
-    rx_sap->mutex_rssi.unlock();
-    rx_sap->condition_rssi.notify_one();
+    }
+    else{
+        bool check_crc = crc == fcs;
+        qDebug() << "fcs" << QString::number(fcs, 16)
+                 << "crc" << QString::number(crc, 16)
+                 << check_crc;
+    }
 }
 //--------------------------------------------------------------------------------------------------
 plme_ed_confirm_t phy_layer::plme_ed_request()
@@ -148,13 +202,27 @@ plme_ed_confirm_t phy_layer::plme_ed_request()
     plme_ed_confirm.energy_level = 0;
     plme_ed_confirm.status = SUCCESS;
 
-    std::unique_lock<std::mutex> read_lock(rx_sap->mutex_rssi);
-    rx_sap->ready_rssi = false;
-    rx_sap->set_mode = rx_mode_rssi;
+    rx_sap->rssi_ready.store(false);
+    std::unique_lock<std::mutex> read_lock(rx_sap->rssi_mutex);
     while(1){
-        if(rx_sap->condition_rssi.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
-            if(rx_sap->ready_rssi){
-                plme_ed_confirm.energy_level = ((min_rssi - rx_sap->rssi) / min_rssi) * 254.0;
+        if(rx_sap->rssi_condition.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
+            if(rx_sap->rssi_ready.load()){
+                //6.5.3.3 Receiver sensitivity: ... –85 dBm or better.
+                //The minimum ED value (0) shall indicate received power less than
+                //10 dB above the specified receiver sensitivity (see 6.5.3.3 and 6.6.3.4),
+                //and the range of received power spanned by the ED values shall be at least 40 dB.
+                //Within this range, the mapping from the received power in decibels to ED value
+                //shall be linear with an accuracy of ± 6 dB.
+                float rssi = rx_sap->rssi_value.load();
+                if(rssi < -75.0f){
+                    plme_ed_confirm.energy_level = 0;
+                }
+                else if(rssi < -35.0f){
+                    plme_ed_confirm.energy_level = (rssi + 75.0f) / 40.f * 254.0;
+                }
+                else{
+                    plme_ed_confirm.energy_level = 255;
+                }
 
                 break;
 
@@ -173,27 +241,17 @@ plme_ed_confirm_t phy_layer::plme_ed_request()
 //--------------------------------------------------------------------------------------------------
 status_t phy_layer::plme_cca_request()
 {
-    status_t status;
-    if(rx_sap->is_signal){
-        status = BUSY;
-
-        return status;
-
-    }
-
-    status = IDLE;
-    std::unique_lock<std::mutex> read_lock(rx_sap->mutex_rssi);
-    rx_sap->ready_rssi = false;
-    rx_sap->set_mode = rx_mode_rssi;
+    status_t status = IDLE;
+    std::unique_lock<std::mutex> lock(rx_sap->rssi_mutex);
     while(1){
-        if(rx_sap->condition_rssi.wait_for(read_lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
-            if(rx_sap->ready_rssi){
-                if(rx_sap->rssi > -75.0){
+        if(rx_sap->rssi_condition.wait_for(lock, std::chrono::milliseconds(10)) != std::cv_status::timeout){
+            if(rx_sap->rssi_ready.load()){
+                rx_sap->rssi_ready.store(false);
+                if(rx_sap->rssi_value.load() > -75.0 || rx_sap->is_signal.load()){
                     status = BUSY;
                 }
 
                 break;
-
             }
         }
         else{
@@ -203,107 +261,9 @@ status_t phy_layer::plme_cca_request()
 
         }
     }
-
+fprintf(stderr, "phy_layer::plme_cca_request() rssi %f status %d\n", rx_sap->rssi_value.load(), status);
     return status;
 
-}
-//--------------------------------------------------------------------------------------------------
-void phy_layer::callback_demodulator_rx()
-{
-    rx_sap->mutex.lock();
-
-    rx_sap->ready = true;
-
-    rx_sap->mutex.unlock();
-    rx_sap->condition.notify_one();
-//    fprintf(stderr, "rx_sap_callback: RX_sap_thread_id %lld\n", std::this_thread::get_id());
-}
-//--------------------------------------------------------------------------------------------------
-void phy_layer::rx_data()
-{
-    int idx_symbol = 0;
-//    const int len = rx_symbols.size();
-
-    int len = rx_sap->len_symbols;
-    uint8_t *rx_symbols = rx_sap->symbols;
-
-    int len_psdu = 0;
-    if(len > 0 && len <= MaxPHYPacketSize * 2){
-        uint8_t octet;// 8 bits
-        uint8_t symbol;// 4 bits
-        uint16_t crc = 0x0;// 4 x symbol
-        for(int i = 0; i < len - 4; ++i){
-            symbol = rx_symbols[i];
-            // need two symbols for octet
-            if(++idx_symbol < 2){
-                octet = symbol;
-            }
-            else{
-                idx_symbol = 0;
-                octet += symbol << 0x4;
-                pd_data->mpdu[len_psdu++] = octet;
-                // revert bit to LSB
-                uint8_t mask;
-                uint8_t b = 0;
-                for (int bit = 0; bit < 8; ++bit) {
-                    mask = 1 << bit;
-                    b |= ((octet & mask) >> bit) << (7 - bit);
-                }
-                // crc16
-                uint16_t idx = ((crc >> 8) ^ b) & 0xff;
-                crc = ((crc << 8) ^ CRC_CCITT_TABLE[idx]) & 0xffff;
-            }
-        }
-        //frame check sequence (FCS)
-        uint16_t fcs = 0x0;
-        idx_symbol = 0;
-        int idx_byte = 0;
-        for(int i = len - 4; i < len; ++i){
-            symbol = rx_symbols[i];
-            // need two symbols for octet
-            if(++idx_symbol < 2){
-                octet = symbol;
-            }
-            else{
-                idx_symbol = 0;
-                octet += symbol << 0x4;
-                pd_data->mpdu[len_psdu++] = octet;
-                // revert bit to LSB
-                uint8_t mask;
-                uint8_t b = 0;
-                for (int bit = 0; bit < 8; ++bit) {
-                    mask = 1 << bit;
-                    b |= ((octet & mask) >> bit) << (7 - bit);
-                }
-                if(++idx_byte < 2){
-                    fcs = b << 0x8;
-                }
-                else{
-                    fcs += b;
-                }
-            }
-        }
-
-//        bool check_crc = crc == fcs;
-//        qDebug() << "fcs" << QString::number(fcs, 16)
-//                 << "crc" << QString::number(crc, 16)
-//                 << check_crc;
-
-        // check CRC
-        if(crc == fcs){
-            pd_data->ppdu_link_quality = 0x0;
-            pd_data->mpdu_length = len_psdu;
-
-            callback_mac->pd_data_indication(pd_data);
-
-        }
-        else{
-
-        }
-    }
-    else{
-
-    }
 }
 //--------------------------------------------------------------------------------------------------
 status_t phy_layer::pd_data_request(pd_data_request_t *pd_data_)
@@ -412,9 +372,6 @@ fprintf(stderr, "phy_layer::plme_set_trx_state_request: TRX_OFF\n");
     case FORCE_TRX_OFF:
         break;
     case TX_ON:
-        rx_sap->mode = rx_mode_off;
-        rx_sap->ready = true;
-        rx_sap->condition.notify_one();
         break;
     default:
         status = INVALID_PARAMETER;

@@ -19,12 +19,11 @@ public:
     mac_sublayer *mac;
 
     bool is_started = false;
-    void start(rx_thread_data_t *rx_thread_data_, double min_rssi_);
+    void start(rx_thread_data_t *rx_thread_data_);
     void connect_mac(mac_sublayer_callback *cb_){callback_mac = cb_;};
     void connect_dev(device_callback *cb_){callback_dev = cb_;};
 
 private:
-    double min_rssi;
     device_callback *callback_dev;
     enum phy_mode{
         CCA_REQUEST,
@@ -48,24 +47,19 @@ private:
     rx_sap_t *rx_sap;
     rx_thread_data_t *rx_thread_data;
     std::thread *demodulator_thread;
-    void callback_demodulator_rx();
     std::vector<uint8_t> rx_symbols;
     pd_data_indication_t *pd_data;
     void rx_data();
 
     rf_sap_t *tx_sap;
-
     std::thread *modulator_thread;
     std::vector<uint8_t> psdu;
     status_t pd_data_request(pd_data_request_t *pd_data_);
     void tx_data(std::vector<uint8_t> *psdu_);
 
-    uint8_t energy_level;
-    const double max_energy_detect_dbm = -75.0;
-    void callback_demodulator_rssi();
     plme_ed_confirm_t plme_ed_request();
     status_t  plme_cca_request();
-    void plme_cca();
+
     pib_attribute_t pib_attribute;
     void *value;
     phy_pib_t *phy_pib;
