@@ -188,16 +188,12 @@ void pluto_sdr::start(rx_thread_data_t *rx_thread_data_)
     libusb_device_handle* usb_sdr_dev = usb_direct->usb_sdr_dev;
     uint8_t usb_sdr_interface_num = usb_direct->usb_sdr_interface_num;
     uint8_t usb_sdr_ep_in = usb_direct->usb_sdr_ep_in;
-//    uint8_t usb_sdr_ep_out = usb_direct->usb_sdr_ep_out;
     rx_thread_data = rx_thread_data_;
     rx_thread_data->reset();
     rx_thread_data->len_buffer = RX_PLUTO_LEN_BUFFER;
     thread_rx = new std::thread(&pluto_sdr_rx::start, dev_rx, usb_sdr_dev,
-                                usb_sdr_interface_num, usb_sdr_ep_in, rx_channel, rx_thread_data);
+                                usb_sdr_interface_num, usb_sdr_ep_in, rx_thread_data);
     thread_rx->detach();
-
-//    thread_tx = new std::thread(&pluto_sdr_tx::start, dev_tx, usb_sdr_dev,
-//                                usb_sdr_interface_num, usb_sdr_ep_out, TX_PLUTO_LEN_BUFFER);
 
     thread_tx = new std::thread(&pluto_sdr_tx::start, dev_tx, tx_lo, cf_ad9361_dds_core_lpc);
 
@@ -242,19 +238,29 @@ void pluto_sdr::set_rx_sampling_frequency(long long int sampling_frequency_hz_)
         char attr[] = "sampling_frequency_available";
         check_range(rx_channel, attr, sampling_frequency_hz_);
     }
-    // unsigned long rate = sf;
-    // ad9361_set_bb_rate(ad9361_phy, rate);
+}
+//-----------------------------------------------------------------------------------------
+void pluto_sdr::get_rx_max_hardwaregain(double &hardwaregain_db_)
+{
+    char buf[256];
+    char attr[] = "hardwaregain_available";
+    int size_out = iio_channel_attr_read(rx_channel, attr, buf, 256);
+    QString str_value(buf);
+    str_value.remove(0, 1);
+    str_value.resize(size_out - 3);
+    QRegularExpression rx("[ ]");
+    QStringList list = str_value.split(rx, Qt::SkipEmptyParts);
+    hardwaregain_db_ = list[2].toInt();
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::set_rx_hardwaregain(double hardwaregain_db_)
 {
     int ret = iio_channel_attr_write_double(rx_channel, "hardwaregain", hardwaregain_db_);
-//    if(ret < 0){
-//        char attr[] = "hardwaregain_available";
-//        int hg = hardwaregain_db_;
-//        check_range(rx_channel, attr, hg);
-//    }
-
+    if(ret < 0){
+        int hg = hardwaregain_db_;
+        char attr[] = "hardwaregain_available";
+        check_range(rx_channel, attr, hg);
+    }
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::set_rx_frequency(long long int frequency_hz_)
@@ -265,11 +271,6 @@ void pluto_sdr::set_rx_frequency(long long int frequency_hz_)
         char attr[] = "frequency_available";
         check_range(rx_lo, attr, frequency_hz_);
     }
-}
-//-----------------------------------------------------------------------------------------
-void pluto_sdr::get_min_rssi(double &rssi_db_)
-{
-    rssi_db_ = -126.0;
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::set_tx_rf_bandwidth(long long int bandwidht_hz_)
@@ -290,6 +291,19 @@ void pluto_sdr::set_tx_sampling_frequency(long long int sampling_frequency_hz_)
         char attr[] = "sampling_frequency_available";
         check_range(tx_channel, attr, sampling_frequency_hz_);
     }
+}
+//-----------------------------------------------------------------------------------------
+void pluto_sdr::get_tx_max_hardwaregain(double &hardwaregain_db_)
+{
+    char buf[256];
+    char attr[] = "hardwaregain_available";
+    int size_out = iio_channel_attr_read(tx_channel, attr, buf, 256);
+    QString str_value(buf);
+    str_value.remove(0, 1);
+    str_value.resize(size_out - 3);
+    QRegularExpression rx("[ ]");
+    QStringList list = str_value.split(rx, Qt::SkipEmptyParts);
+    hardwaregain_db_ = list[2].toInt();
 }
 //-----------------------------------------------------------------------------------------
 void pluto_sdr::set_tx_hardwaregain(double hardwaregain_db_)
@@ -318,9 +332,11 @@ void pluto_sdr::check_range(iio_channel *ch_, char *attr_, int value_)
     int size_out = iio_channel_attr_read(ch_, attr_, buf, 256);
     QString str_value(buf);
     str_value.remove(0, 1);
-    str_value.resize(size_out - 2);
+    str_value.resize(size_out - 3);
+    qDebug() << str_value;
     QRegularExpression rx("[ ]");
     QStringList list = str_value.split(rx, Qt::SkipEmptyParts);
+    qDebug() << list;
     int min = list[0].toInt();
     int max = list[2].toInt();
     QMessageBox msg;
@@ -329,7 +345,7 @@ void pluto_sdr::check_range(iio_channel *ch_, char *attr_, int value_)
                     QString::number(min));
     }
     else if(max < value_){
-        msg.setText("The value of " + QString::fromUtf8(attr_) + " is greater than the minimum: " +
+        msg.setText("The value of " + QString::fromUtf8(attr_) + " is greater than the maximum: " +
                     QString::number(max));
     }
     else{

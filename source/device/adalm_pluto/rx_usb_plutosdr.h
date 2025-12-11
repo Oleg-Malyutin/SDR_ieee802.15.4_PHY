@@ -25,13 +25,11 @@ public:
     rx_usb_plutosdr();
     void start(libusb_device_handle* usb_sdr_dev_,
                uint8_t usb_sdr_interface_num_, uint8_t usb_sdr_ep_in_,
-               iio_channel *rssi_channel_,
                unsigned int num_channels, uint32_t buffer_size_samples_,
                rx_usb_transfer *transfer_, usb_plutosdr_cb_fn callback_);
     void stop();
 
 private:
-    struct iio_channel* rssi_channel = nullptr;
     libusb_device_handle *usb_sdr_dev;
     uint8_t usb_sdr_interface_num, usb_sdr_ep_in, usb_sdr_ep_out;
     // channel bitmask

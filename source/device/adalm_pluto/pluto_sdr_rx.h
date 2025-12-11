@@ -22,7 +22,7 @@
 #include "device/device_type.h"
 #include "rx_usb_plutosdr.h"
 
-#define RX_PLUTO_LEN_BUFFER (16384 / 16)
+#define RX_PLUTO_LEN_BUFFER 512 * 2 //This is the minimum for pluto with local IIO (8 symbols are needed - 512 IQ counts)
 
 class pluto_sdr_rx
 {
@@ -33,32 +33,26 @@ public:
     bool is_started = false;
     void start(libusb_device_handle *usb_sdr_dev_,
                uint8_t usb_sdr_interface_num_, uint8_t usb_sdr_ep_,
-               iio_channel *rssi_channel_,
                rx_thread_data_t *rx_thread_data_);
     void stop();
 
 private:
     rx_usb_plutosdr *usb_rx;
 
-    double rssi = 0.0;
-    struct iio_channel *rssi_channel = nullptr;
-
     int len_buffer = 0;
     std::complex<float> *ptr_buffer;
     std::complex<float> *buffer_a;
     std::complex<float> *buffer_b;
     bool swap = false;
+    constexpr static float scale = 1.0f / 2047.0f;
 
     rx_usb_transfer* transfer;
     static int rx_callback(rx_usb_transfer *transfer_);
 
-    int c = 0;
     rx_thread_data_t *rx_thread_data;
 
     void work();
     void rx_data(std::unique_lock<std::mutex> &lock_);
-    void rx_rssi();
-    void rx_off();
 
 };
 
