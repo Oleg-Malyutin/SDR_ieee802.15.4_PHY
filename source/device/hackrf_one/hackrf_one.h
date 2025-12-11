@@ -33,11 +33,12 @@ public slots:
     void stop();
     void set_rx_rf_bandwidth(long long int bandwidht_hz_);
     void set_rx_sampling_frequency(long long int sampling_frequency_hz_);
+    void get_rx_max_hardwaregain(double &hardwaregain_db_);
     void set_rx_hardwaregain(double hardwaregain_db_);
     void set_rx_frequency(long long int frequency_hz_);
-    void get_min_rssi(double &rssi_db_);
     void set_tx_rf_bandwidth(long long int bandwidht_hz_);
     void set_tx_sampling_frequency(long long int sampling_frequency_hz_);
+    void get_tx_max_hardwaregain(double &hardwaregain_db_);
     void set_tx_hardwaregain(double hardwaregain_db_);
     void set_tx_frequency(long long int frequency_hz_);
 

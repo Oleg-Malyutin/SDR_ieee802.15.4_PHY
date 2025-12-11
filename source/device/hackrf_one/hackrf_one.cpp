@@ -218,6 +218,12 @@ void hackrf_one::set_rx_sampling_frequency(long long int sampling_frequency_hz_)
     hackrf_set_sample_rate(device, rx_sample_rate_hz);
 }
 //-----------------------------------------------------------------------------------------
+void hackrf_one::get_rx_max_hardwaregain(double &hardwaregain_db_)
+{
+    hardwaregain_db_ = 40 + 62;
+    hardwaregain_db_ -= 30.0; // correction from practice
+}
+//-----------------------------------------------------------------------------------------
 void hackrf_one::set_rx_hardwaregain(double hardwaregain_db_)
 {
     int gain = hardwaregain_db_ + 11;
@@ -258,11 +264,6 @@ void hackrf_one::set_rx_frequency(long long int frequency_hz_)
     fprintf(stderr, "hackrf_one::set_rx_frequency: %u\n", fq);
 }
 //-----------------------------------------------------------------------------------------
-void hackrf_one::get_min_rssi(double &rssi_db_)
-{
-    rssi_db_ = -45.0 - 31.0 - 14.0;// -45 - 8bit, -31 - threshold CCA(-76), 14 - noise HackRF?
-}
-//-----------------------------------------------------------------------------------------
 void hackrf_one::set_tx_rf_bandwidth(long long int bandwidht_hz_)
 {
 
@@ -273,11 +274,19 @@ void hackrf_one::set_tx_sampling_frequency(long long int sampling_frequency_hz_)
 
 }
 //-----------------------------------------------------------------------------------------
+void hackrf_one::get_tx_max_hardwaregain(double &hardwaregain_db_)
+{
+    hardwaregain_db_ = 47;
+}
+//-----------------------------------------------------------------------------------------
 void hackrf_one::set_tx_hardwaregain(double hardwaregain_db_)
 {
-//    float gain = 1.0f;
+    uint32_t vga_gain = hardwaregain_db_;
+    if(vga_gain > 47){
+        vga_gain = 47;
+    }
     int err = 0;
-    err |= hackrf_set_txvga_gain(device, 47);
+    err |= hackrf_set_txvga_gain(device, vga_gain);
     err |= hackrf_set_amp_enable(device, 1);
     err |= hackrf_set_antenna_enable(device, 0);
 

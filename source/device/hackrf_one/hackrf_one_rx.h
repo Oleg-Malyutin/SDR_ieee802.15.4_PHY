@@ -23,24 +23,17 @@ private:
     rx_usb_hackrf *usb_rx;
     libusb_device_handle *usb_device;
     rx_usb_transfer *transfer;
+    constexpr static float scale = 1.0f / 127.0f;
     int len_buffer = 0;
     std::complex<float> *ptr_buffer;
     std::complex<float> *buffer_a;
     std::complex<float> *buffer_b;
     bool swap = false;
-//    moving_average<float, 32> avg_energy_detect;
-    int c = 0;
 
     static void rx_callback(rx_usb_transfer *transfer_);
     void work();
     void rx_data(std::unique_lock<std::mutex> &lock_);
-    void rx_rssi(std::unique_lock<std::mutex> &lock_);
-    void rx_off();
     void stop();
-    void shutdown();
-
-
-    float max_sum = 0;
 
 };
 

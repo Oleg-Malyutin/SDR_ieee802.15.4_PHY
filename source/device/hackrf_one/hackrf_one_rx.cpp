@@ -29,7 +29,7 @@ void hackrf_one_rx::start(rx_thread_data_t *rx_thread_data_,
 
     transfer->ctx = this;
     transfer->usb_event_ready = false;
-
+    swap = false;
     usb_rx->start(usb_device_, transfer, rx_callback, rx_tx_mutex_);
 
     is_started = true;
@@ -51,31 +51,20 @@ void hackrf_one_rx::rx_callback(rx_usb_transfer* transfer_)
     std::complex<float> *ptr_buffer = ctx->swap ? ctx->buffer_a : ctx->buffer_b;
     ctx->swap = !ctx->swap;
 
-    int j = 0;
     for(int i = 0; i < len_buffer; ++i){
-        ptr_buffer[i].real(buffer[j] * 1e-2f);
-        ptr_buffer[i].imag(buffer[j + 1] * 1e-2f);
-        j += 2;
+        ptr_buffer[i].real(buffer[0] * scale);
+        ptr_buffer[i].imag(buffer[1] * scale);
+        buffer += 2;
     }
 
     transfer_->usb_event_mutex.lock();
 
-    if(transfer_->usb_event_ready == false){
-        ctx->len_buffer = len_buffer;
-        ctx->ptr_buffer = ptr_buffer;
-        transfer_->usb_event_ready = true;
+    ctx->len_buffer = len_buffer;
+    ctx->ptr_buffer = ptr_buffer;
+    transfer_->usb_event_ready = true;
 
-        transfer_->usb_event_mutex.unlock();
-
-        transfer_->usb_event.notify_all();
-    }
-    else{
-
-        transfer_->usb_event_mutex.unlock();
-
-//        fprintf(stderr, "hackrf_one_rx::callback: skip------\n");
-    }
-
+    transfer_->usb_event_mutex.unlock();
+    transfer_->usb_event.notify_all();
 }
 //-----------------------------------------------------------------------------------------
 void hackrf_one_rx::work()
@@ -85,15 +74,14 @@ void hackrf_one_rx::work()
     std::unique_lock<std::mutex> lock(transfer->usb_event_mutex);
 
     while(!rx_thread_data->stop){
-        if(rx_thread_data->set_mode == rx_mode_data){
-            rx_data(lock);
+
+        if(rx_thread_data->status != Connect){
+
+            break;
+
         }
-        else if(rx_thread_data->set_mode == rx_mode_rssi){
-            rx_rssi(lock);
-        }
-        else if(rx_thread_data->set_mode == rx_mode_off){
-            rx_off();
-        }
+
+        rx_data(lock);
     }
 
     stop();
@@ -105,53 +93,22 @@ void hackrf_one_rx::rx_data(std::unique_lock<std::mutex> &lock_)
 {
     transfer->usb_event.wait(lock_);
     if(transfer->usb_event_ready){
-        if (rx_thread_data->mutex.try_lock()){
-            rx_thread_data->len_buffer = len_buffer;
-            rx_thread_data->ptr_buffer = ptr_buffer;
-            rx_thread_data->mode = rx_mode_data;
-            rx_thread_data->ready = true;
-            rx_thread_data->mutex.unlock();
-            rx_thread_data->condition_value.notify_one();
-            c = 0;
-        }
-        else{
-            ++c;
-//            fprintf(stderr, "hackrf_one_rx::rx_data: skip buffer %d\n", c);
-        }
         transfer->usb_event_ready = false;
-    }
-}
-//-----------------------------------------------------------------------------------------
-void hackrf_one_rx::rx_rssi(std::unique_lock<std::mutex> &lock_)
-{
-    transfer->usb_event.wait(lock_);
-    if(transfer->usb_event_ready){
         float sum = 0.0f;
         for(int i = 0; i < len_buffer; ++i){
-            sum += norm(ptr_buffer[i] / 1.271f);
+            sum += norm(ptr_buffer[i]);
         }
-        sum /= len_buffer;
-        float rssi = 10.0f * log10f(sum) - 48.0f;// (-48.0f) this is: -31 - noise with antenna, -76 treshold for CCA and -3 margin
-
+        float len_avg = len_buffer;
+        float rssi = 10.0f * log10(sum / len_avg * 0.707f) - 72.0f;
         rx_thread_data->mutex.lock();
+        rx_thread_data->len_buffer = len_buffer;
+        rx_thread_data->ptr_buffer = ptr_buffer;
         rx_thread_data->rssi = rssi;
         rx_thread_data->ready = true;
-        rx_thread_data->mode = rx_mode_rssi;
         rx_thread_data->mutex.unlock();
-        rx_thread_data->condition_value.notify_one();
-        transfer->usb_event_ready = false;
+        rx_thread_data->condition.notify_one();
     }
 }
 //-----------------------------------------------------------------------------------------
-void hackrf_one_rx::rx_off()
-{
-    rx_thread_data->mutex.lock();
-    rx_thread_data->ready = true;
-    rx_thread_data->mode = rx_mode_off;
-    rx_thread_data->mutex.unlock();
-    rx_thread_data->condition_value.notify_one();
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(1)); // TODO 8 symbols
-}
-//-----------------------------------------------------------------------------------------
 
