@@ -7,7 +7,7 @@
 #include <libusb-1.0/libusb.h>
 #endif
 
-#include "iio.h"
+#include <iio.h>
 
 class sdrusbgadget
 {

@@ -79,7 +79,7 @@ bool pluto_sdr::open_device(std::string &name_, std::string &err_)
     std::string err;
 
     if(!sdrusbgadget->upload(ip, err)){
-        err_ = "PlutoSDR open failed: " + err;
+        err_ = "open failed: " + err;
 
         return false;
 
@@ -87,16 +87,36 @@ bool pluto_sdr::open_device(std::string &name_, std::string &err_)
 
     delete sdrusbgadget;
 
+    // Create scan context
+    iio_scan_context* sctx = iio_create_scan_context(NULL, 0);
+    iio_context_info** ctxInfoList;
+    ssize_t count = iio_scan_context_get_info_list(sctx, &ctxInfoList);
+    std::string desc;
+    std::string duri;
+    for (ssize_t i = 0; i < count; i++) {
+        iio_context_info* info = ctxInfoList[i];
+        desc = iio_context_info_get_description(info);
+        duri = iio_context_info_get_uri(info);
+
+        qDebug() << "iio_context_info" << "desc" << desc.c_str() << " duri" << duri.c_str();
+
+        if (desc.find("PlutoSDR") != std::string::npos && desc.find("usb:") != std::string::npos) {
+
+            break;
+
+        }
+    }
+
     int probe = 5;
     while(probe > 0 && context == nullptr){
         --probe;
         QThread::sleep(1);
-//        context = iio_create_context_from_uri("ip:192.168.2.1");
-        context = iio_create_context_from_uri("usb:");
+       // context = iio_create_context_from_uri("ip:192.168.2.1");
+        context = iio_create_context_from_uri(duri.c_str());
     }
 
     if(context == nullptr) {
-        err_ = "PlutoSDR open failed";
+        err_ = "open failed context == nullptr";
 
         return false;
 

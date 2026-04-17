@@ -19,15 +19,16 @@ void sdrusbgadget::open(iio_context* context)
     close();
     // retrieve url and separate bus / device
     const char *uri = iio_context_get_attr_value(context, "uri");
+    // fprintf(stderr, uri);
     if(!uri) {
-        fprintf(stderr, "failed to retrieve uri from iio");
-        throw std::runtime_error("failed to retrieve uri from iio");
+        fprintf(stderr, "failed to retrieve uri from iio\n");
+        throw std::runtime_error("failed to retrieve uri from iio\n");
     }
     // retrieve bus and device number from uri
     unsigned short int bus_num, dev_addr;
     if(2 != std::sscanf(uri, "usb:%hu.%hu", &bus_num, &dev_addr)) {
-        fprintf(stderr, "failed to extract usb bus and device address from uri");
-        throw std::runtime_error("failed to extract usb bus and device address from uri");
+        fprintf(stderr, "failed to extract usb bus and device address from uri\n");
+        throw std::runtime_error("failed to extract usb bus and device address from uri\n");
     }
 
     int rc;
@@ -35,14 +36,14 @@ void sdrusbgadget::open(iio_context* context)
     rc = libusb_init(&usb_ctx);
     if (rc < 0) {
         fprintf(stderr, "libusb init error (%d)", rc);
-        throw std::runtime_error("libusb init error");
+        throw std::runtime_error("libusb init error\n");
     }
     // retrieve device list
     struct libusb_device **devs;
     int dev_count = libusb_get_device_list(usb_ctx, &devs);
     if(dev_count < 0) {
         fprintf(stderr, "libusb get device list error (%d)", dev_count);
-        throw std::runtime_error("libusb get device list error");
+        throw std::runtime_error("libusb get device list error\n");
     }
     // iterate over devices
     for(int i = 0; i < dev_count; i++) {
