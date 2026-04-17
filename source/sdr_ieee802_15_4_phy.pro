@@ -70,7 +70,27 @@ equals(plutosdr,1):{
         device/adalm_pluto/resources/sdr_usb_gadget
     RESOURCES += \
         device/adalm_pluto/resources/resources.qrc
+
+    unix{
+        INCLUDEPATH += /usr/include/libusb-1.0
+        LIBS += -lusb-1.0
+        LIBS += -lssh
+        LIBS += -liio
+        #LIBS += -lad9361
     }
+    win32 {
+        LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0
+        INCLUDEPATH += $$PWD/device/libusb-1.0
+        DEPENDPATH += $$PWD/device/libusb-1.0
+        LIBS += -L$$PWD/device/adalm_pluto/lib_iio/Windows-VS-2019-x64/ -llibiio
+        INCLUDEPATH += $$PWD/device/adalm_pluto/lib_iio/include
+        DEPENDPATH += $$PWD/device/adalm_pluto/lib_iio/include
+        LIBS += -L$$PWD/device/adalm_pluto/libssh/ -lssh
+        INCLUDEPATH += $$PWD/device/adalm_pluto/libssh/include
+        DEPENDPATH += $$PWD/device/adalm_pluto/libssh/include
+        LIBS += -lws2_32
+    }
+}
 
 equals(hackrf,1):{
     QMAKE_CXXFLAGS += -DUSE_HACKRF
@@ -88,7 +108,19 @@ equals(hackrf,1):{
         device/hackrf_one/rx_usb_hackrf.h
     FORMS += \
         device/hackrf_one/hackrf_one.ui
+
+    unix{
+        INCLUDEPATH += /usr/include/libusb-1.0
+        LIBS += -lusb-1.0
     }
+    win32 {
+        LIBS += -L$$PWD/device/limesdr_mini/driver/ConnectionFTDI/FTD3XXLibrary/x64/ -lFTD3XX
+        LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0
+        INCLUDEPATH += $$PWD/device/libusb-1.0
+        DEPENDPATH += $$PWD/device/libusb-1.0
+     }
+ }
+
 
 equals(limesdr,1):{
     QMAKE_CXXFLAGS += -DUSE_LIMESDR
@@ -105,7 +137,16 @@ equals(limesdr,1):{
     DISTFILES += \
         device/limesdr_mini/driver/ConnectionRegistry/CMakeLists.txt \
         device/limesdr_mini/lime_default.cfg
+
+    unix{
+        INCLUDEPATH += /usr/include/libusb-1.0
+        LIBS += -lLimeSuite
     }
+    win32 {
+        LIBS += -L$$PWD/device/limesdr_mini/driver/ConnectionFTDI/FTD3XXLibrary/x64/ -lFTD3XX
+        LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0
+    }
+}
 
 equals(usrp,1):{
     QMAKE_CXXFLAGS += -DUSE_USRP
@@ -119,7 +160,17 @@ equals(usrp,1):{
         device/usrp/usrp_tx.h
     FORMS += \
         device/usrp/usrp.ui
+
+    unix{
+        LIBS += -luhd
     }
+    win32 {
+        LIBS += -L$$PWD/libuhd/ -luhd
+        INCLUDEPATH += $$PWD/libuhd/
+        INCLUDEPATH += $$PWD/libuhd/uhd
+        DEPENDPATH += $$PWD/libuhd/
+    }
+}
 
 
 SOURCES += \
@@ -162,34 +213,6 @@ HEADERS += \
 FORMS += \
     main_window.ui
 
-
-
-unix{
-INCLUDEPATH += /usr/include/libusb-1.0
-LIBS += -lusb-1.0
-LIBS += -lssh
-LIBS += -liio
-#LIBS += -lad9361
-LIBS += -lLimeSuite
-LIBS += -luhd
-}
-win32 {
-LIBS += -L$$PWD/device/limesdr_mini/driver/ConnectionFTDI/FTD3XXLibrary/x64/ -lFTD3XX
-LIBS += -L$$PWD/device/libusb-1.0/ -llibusb-1.0
-INCLUDEPATH += $$PWD/device/libusb-1.0
-DEPENDPATH += $$PWD/device/libusb-1.0
-LIBS += -L$$PWD/device/adalm_pluto/lib_iio/Windows-VS-2019-x64/ -llibiio
-INCLUDEPATH += $$PWD/device/adalm_pluto/lib_iio/include
-DEPENDPATH += $$PWD/device/adalm_pluto/lib_iio/include
-LIBS += -L$$PWD/device/adalm_pluto/libssh/ -lssh
-INCLUDEPATH += $$PWD/device/adalm_pluto/libssh/include
-DEPENDPATH += $$PWD/device/adalm_pluto/libssh/include
-LIBS += -lws2_32
-LIBS += -L$$PWD/libuhd/ -luhd
-INCLUDEPATH += $$PWD/libuhd/
-INCLUDEPATH += $$PWD/libuhd/uhd
-DEPENDPATH += $$PWD/libuhd/
-}
 
 
 

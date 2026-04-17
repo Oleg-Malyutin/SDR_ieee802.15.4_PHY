@@ -99,10 +99,17 @@ void higher_layer::start_new_pan()
 
     if(new_channel != 0xff){
         mlme_start_request_t start_request;
-        start_request.pan_coordinator = true;
+        start_request.pan_coordinator = true;           // If this value is TRUE, the device will become the PAN coordinator of a new PAN.
+                                                        // If this value is FALSE, the device will begin transmitting beacons on the PAN with which it is associated.
         start_request.logical_channel = new_channel;
-        start_request.pan_id = 0xAAAA; // TODO
-
+        start_request.pan_id = 0xAAAA;                  // TODO // The PAN identifier to be used by the beacon.
+        start_request.beacon_order = 15;                // If BO = 15, the coordinator will not transmit a beacon, and the SuperframeOrder parameter value is ignored.
+        start_request.superframe_order = 15;            // If SO = 15, the superframe will not be active after the beacon.
+        start_request.battery_life_extension = false;   // If this value is TRUE, the receiver of the beaconing device is disabled mac-BattLifeExtPeriods full backoff periods
+                                                        //  after the interframe spacing (IFS) period of the beacon frame.
+                                                        // If this value is FALSE, the receiver of the beaconing device remains enabled for the entire CAP.
+        start_request.coord_realignment = false;        // TRUE if a coordinator realignment command is to be transmitted prior to changing the superframe configuration or FALSE otherwise.
+        start_request.security_enable = false;          // TRUE if security is enabled for beacon transmissions or FALSE otherwise.
         if(callback_mlme->mlme_start_request(start_request) == SUCCESS){
             // TODO info;
         }
