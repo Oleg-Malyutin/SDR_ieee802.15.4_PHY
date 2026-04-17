@@ -185,7 +185,7 @@ void device::open_device(QString name_)
         sdr->close_device();
         timer->start(1000);
 
-        emit device_status(QString::fromStdString(sdr_name + err));
+        emit device_status(QString::fromStdString(sdr_name + " " + err));
 
     }
 }
